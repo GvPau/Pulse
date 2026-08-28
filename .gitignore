@@ -1,0 +1,13 @@
+# Binarios compilados
+*.exe
+*.out
+
+# Carpeta de air (output del build)
+tmp/
+
+# Entorno local
+.env
+
+# Sistema
+.DS_Store
+Thumbs.db
