@@ -6,12 +6,19 @@ import (
 	"net/http"
 	"os"
 	"pulse/internal/database"
+	"pulse/internal/user"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/joho/godotenv"
 )
 
 func main() {
+	err := godotenv.Load()
+	if err != nil {
+		panic("failed to load .env file: " + err.Error())
+	}
+
 	ctx := context.Background()
 
 	dsn := os.Getenv("DATABASE_URL")
@@ -28,6 +35,10 @@ func main() {
 
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
+
+	// Routes
+	r.Route("/auth", user.Router(pool))
+
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("OK"))
 	})
