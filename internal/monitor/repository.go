@@ -1,0 +1,117 @@
+package monitor
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"uuid"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+type Repository struct {
+	pool *pgxpool.Pool
+}
+
+var ErrNotFound = errors.New("monitor not found")
+
+func NewRepository(pool *pgxpool.Pool) *Repository {
+	return &Repository{pool: pool}
+}
+
+func (r *Repository) Create(ctx context.Context, m *Monitor) error {
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO monitors (id, user_id, name, url, method, interval_seconds, timeout_seconds, expected_status, active)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		m.ID, m.UserID, m.Name, m.URL, m.Method, m.IntervalSeconds, m.TimeoutSeconds, m.ExpectedStatus, m.Active,
+	)
+
+	if err != nil {
+		return fmt.Errorf("create monitor: %w", err)
+	}
+
+	return nil
+}
+
+func (r *Repository) ListByUser(ctx context.Context, userID uuid.UUID) ([]Monitor, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, user_id, name, url, method, interval_seconds, timeout_seconds, expected_status, active, created_at, updated_at
+		 FROM monitors WHERE user_id = $1 ORDER BY created_at`,
+		userID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list monitors: %w", err)
+	}
+	defer rows.Close()
+
+	var monitors []Monitor
+	for rows.Next() {
+		var m Monitor
+		if err := rows.Scan(&m.ID, &m.UserID, &m.Name, &m.URL, &m.Method, &m.IntervalSeconds, &m.TimeoutSeconds, &m.ExpectedStatus, &m.Active, &m.CreatedAt, &m.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan monitor: %w", err)
+		}
+		monitors = append(monitors, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list monitors rows: %w", err)
+	}
+
+	return monitors, nil
+}
+
+func (r *Repository) GetByID(ctx context.Context, userID, id uuid.UUID) (*Monitor, error) {
+	m := &Monitor{}
+	err := r.pool.QueryRow(ctx,
+		`SELECT id, user_id, name, url, method, interval_seconds, timeout_seconds, expected_status, active, created_at, updated_at
+		 FROM monitors WHERE id = $1 AND user_id = $2`,
+		id, userID,
+	).Scan(&m.ID, &m.UserID, &m.Name, &m.URL, &m.Method, &m.IntervalSeconds, &m.TimeoutSeconds, &m.ExpectedStatus, &m.Active, &m.CreatedAt, &m.UpdatedAt)
+
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("get monitor by id: %w", err)
+	}
+
+	return m, nil
+}
+
+func (r *Repository) Update(ctx context.Context, userID, id uuid.UUID, m *Monitor) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE monitors
+		 SET name = $1, url = $2, method = $3,
+		     interval_seconds = $4, timeout_seconds = $5,
+		     expected_status = $6, active = $7
+		 WHERE id = $8 AND user_id = $9`,
+		m.Name, m.URL, m.Method, m.IntervalSeconds, m.TimeoutSeconds, m.ExpectedStatus, m.Active, id, userID,
+	)
+
+	if err != nil {
+		return fmt.Errorf("update monitor: %w", err)
+	}
+
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+
+	return nil
+}
+
+func (r *Repository) Delete(ctx context.Context, userID, id uuid.UUID) error {
+	tag, err := r.pool.Exec(ctx,
+		`DELETE FROM monitors WHERE id = $1 AND user_id = $2`,
+		id, userID,
+	)
+
+	if err != nil {
+		return fmt.Errorf("delete monitor: %w", err)
+	}
+
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+
+	return nil
+}

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"pulse/internal/database"
+	"pulse/internal/monitor"
 	"pulse/internal/user"
 
 	"github.com/go-chi/chi/v5"
@@ -36,11 +37,15 @@ func newAPI(ctx context.Context) (*api, error) {
 	userRepo := user.NewRepository(pool)
 	userService := user.NewService(userRepo)
 
+	monitorRepo := monitor.NewRepository(pool)
+	monitorService := monitor.NewService(monitorRepo)
+
 	// Router
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 
 	r.Route("/auth", user.Router(userService))
+	r.Route("/monitors", monitor.Router(monitorService))
 
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("OK"))
