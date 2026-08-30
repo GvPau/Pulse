@@ -8,7 +8,9 @@ import (
 	"os"
 	"pulse/internal/database"
 	"pulse/internal/monitor"
+	"pulse/internal/scheduler"
 	"pulse/internal/user"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -16,8 +18,10 @@ import (
 )
 
 type api struct {
-	router *chi.Mux
-	pool   *pgxpool.Pool
+	router    *chi.Mux
+	pool      *pgxpool.Pool
+	scheduler *scheduler.Scheduler
+	worker    *scheduler.Worker
 }
 
 func newAPI(ctx context.Context) (*api, error) {
@@ -40,6 +44,11 @@ func newAPI(ctx context.Context) (*api, error) {
 	monitorRepo := monitor.NewRepository(pool)
 	monitorService := monitor.NewService(monitorRepo)
 
+	// Scheduler and Worker
+	jobs := make(chan scheduler.Job)
+	sched := scheduler.NewScheduler(monitorRepo, jobs, 1*time.Second)
+	wrk := scheduler.NewWorker(monitorRepo, jobs)
+
 	// Router
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
@@ -51,5 +60,5 @@ func newAPI(ctx context.Context) (*api, error) {
 		w.Write([]byte("OK"))
 	})
 
-	return &api{router: r, pool: pool}, nil
+	return &api{router: r, pool: pool, scheduler: sched, worker: wrk}, nil
 }

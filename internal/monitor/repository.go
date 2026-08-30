@@ -169,3 +169,22 @@ func (r *Repository) UpdateNextRun(ctx context.Context, id uuid.UUID, nextRun ti
 
 	return nil
 }
+
+func (r *Repository) GetMonitorById(ctx context.Context, id uuid.UUID) (*Monitor, error) {
+	m := &Monitor{}
+	err := r.pool.QueryRow(ctx,
+		`SELECT id, user_id, name, url, method, interval_seconds, timeout_seconds, expected_status, active, next_run, created_at, updated_at
+		 FROM monitors WHERE id = $1`, id).Scan(&m.ID, &m.UserID, &m.Name, &m.URL, &m.Method,
+		&m.IntervalSeconds, &m.TimeoutSeconds, &m.ExpectedStatus, &m.Active,
+		&m.NextRun, &m.CreatedAt, &m.UpdatedAt)
+
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+
+		return nil, fmt.Errorf("get monitor by id: %w", err)
+	}
+
+	return m, nil
+}
