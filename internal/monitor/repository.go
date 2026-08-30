@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 	"uuid"
 
 	"github.com/jackc/pgx/v5"
@@ -111,6 +112,59 @@ func (r *Repository) Delete(ctx context.Context, userID, id uuid.UUID) error {
 
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
+	}
+
+	return nil
+}
+
+func (r *Repository) ListActive(ctx context.Context) ([]Monitor, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, user_id, name, url, method, interval_seconds, timeout_seconds, expected_status, active, next_run, created_at, updated_at 
+	FROM monitors 
+	WHERE active = true`)
+
+	if err != nil {
+		return nil, fmt.Errorf("list active monitors %w", err)
+	}
+	defer rows.Close()
+
+	var monitors []Monitor
+	for rows.Next() {
+		var m Monitor
+		err := rows.Scan(
+			&m.ID,
+			&m.UserID,
+			&m.Name,
+			&m.URL,
+			&m.Method,
+			&m.IntervalSeconds,
+			&m.TimeoutSeconds,
+			&m.ExpectedStatus,
+			&m.Active,
+			&m.NextRun,
+			&m.CreatedAt,
+			&m.UpdatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scan active monitor: %w", err)
+		}
+		monitors = append(monitors, m)
+	}
+
+	err = rows.Err()
+	if err != nil {
+		return nil, fmt.Errorf("list active monitors rows %w", err)
+	}
+
+	return monitors, nil
+}
+
+func (r *Repository) UpdateNextRun(ctx context.Context, id uuid.UUID, nextRun time.Time) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE monitors SET next_run = $1 WHERE id = $2`, nextRun, id)
+
+	if err != nil {
+		return fmt.Errorf("update next run %w", err)
 	}
 
 	return nil

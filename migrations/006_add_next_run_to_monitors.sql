@@ -1,0 +1,2 @@
+ALTER TABLE monitors
+ADD COLUMN next_run TIMESTAMPTZ; 
