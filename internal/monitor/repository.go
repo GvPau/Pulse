@@ -64,10 +64,10 @@ func (r *Repository) ListByUser(ctx context.Context, userID uuid.UUID) ([]Monito
 func (r *Repository) GetByID(ctx context.Context, userID, id uuid.UUID) (*Monitor, error) {
 	m := &Monitor{}
 	err := r.pool.QueryRow(ctx,
-		`SELECT id, user_id, name, url, method, interval_seconds, timeout_seconds, expected_status, active, created_at, updated_at
+		`SELECT id, user_id, name, url, method, interval_seconds, timeout_seconds, expected_status, active, created_at, updated_at, failure_threshold
 		 FROM monitors WHERE id = $1 AND user_id = $2`,
 		id, userID,
-	).Scan(&m.ID, &m.UserID, &m.Name, &m.URL, &m.Method, &m.IntervalSeconds, &m.TimeoutSeconds, &m.ExpectedStatus, &m.Active, &m.CreatedAt, &m.UpdatedAt)
+	).Scan(&m.ID, &m.UserID, &m.Name, &m.URL, &m.Method, &m.IntervalSeconds, &m.TimeoutSeconds, &m.ExpectedStatus, &m.Active, &m.CreatedAt, &m.UpdatedAt, &m.FailureThreshold)
 
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -119,7 +119,7 @@ func (r *Repository) Delete(ctx context.Context, userID, id uuid.UUID) error {
 
 func (r *Repository) ListActive(ctx context.Context) ([]Monitor, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT id, user_id, name, url, method, interval_seconds, timeout_seconds, expected_status, active, next_run, created_at, updated_at 
+		`SELECT id, user_id, name, url, method, interval_seconds, timeout_seconds, expected_status, active, next_run, created_at, updated_at, failure_threshold 
 	FROM monitors 
 	WHERE active = true`)
 
@@ -144,6 +144,7 @@ func (r *Repository) ListActive(ctx context.Context) ([]Monitor, error) {
 			&m.NextRun,
 			&m.CreatedAt,
 			&m.UpdatedAt,
+			&m.FailureThreshold,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan active monitor: %w", err)
@@ -173,10 +174,10 @@ func (r *Repository) UpdateNextRun(ctx context.Context, id uuid.UUID, nextRun ti
 func (r *Repository) GetMonitorById(ctx context.Context, id uuid.UUID) (*Monitor, error) {
 	m := &Monitor{}
 	err := r.pool.QueryRow(ctx,
-		`SELECT id, user_id, name, url, method, interval_seconds, timeout_seconds, expected_status, active, next_run, created_at, updated_at
+		`SELECT id, user_id, name, url, method, interval_seconds, timeout_seconds, expected_status, active, next_run, created_at, updated_at, failure_threshold
 		 FROM monitors WHERE id = $1`, id).Scan(&m.ID, &m.UserID, &m.Name, &m.URL, &m.Method,
 		&m.IntervalSeconds, &m.TimeoutSeconds, &m.ExpectedStatus, &m.Active,
-		&m.NextRun, &m.CreatedAt, &m.UpdatedAt)
+		&m.NextRun, &m.CreatedAt, &m.UpdatedAt, &m.FailureThreshold)
 
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -187,4 +188,34 @@ func (r *Repository) GetMonitorById(ctx context.Context, id uuid.UUID) (*Monitor
 	}
 
 	return m, nil
+}
+
+// CountConsecutiveFailures returns how many consecutive failing checks the
+// monitor has had, counting back from the most recent check.
+func (r *Repository) CountConsecutiveFailures(ctx context.Context, monitorID uuid.UUID) (int, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT success 
+	FROM monitor_checks 
+	WHERE monitor_id = $1 ORDER BY checked_at DESC`, monitorID)
+
+	if err != nil {
+		return 0, fmt.Errorf("count consecutive failures %w", err)
+	}
+	defer rows.Close()
+
+	count := 0
+	for rows.Next() {
+		var success bool
+		if err := rows.Scan(&success); err != nil {
+			return 0, err
+		}
+
+		if !success {
+			count++
+		} else {
+			break
+		}
+	}
+
+	return count, rows.Err()
 }

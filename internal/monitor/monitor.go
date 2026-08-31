@@ -8,15 +8,16 @@ import (
 
 type Monitor struct {
 	shared.Model
-	UserID          uuid.UUID  `json:"user_id"`
-	Name            string     `json:"name"`
-	URL             string     `json:"url"`
-	Method          string     `json:"method"`
-	IntervalSeconds int        `json:"interval_seconds"`
-	TimeoutSeconds  int        `json:"timeout_seconds"`
-	ExpectedStatus  int        `json:"expected_status"`
-	Active          bool       `json:"active"`
-	NextRun         *time.Time `json:"next_run,omitempty"`
+	UserID           uuid.UUID  `json:"user_id"`
+	Name             string     `json:"name"`
+	URL              string     `json:"url"`
+	Method           string     `json:"method"`
+	IntervalSeconds  int        `json:"interval_seconds"`
+	TimeoutSeconds   int        `json:"timeout_seconds"`
+	ExpectedStatus   int        `json:"expected_status"`
+	Active           bool       `json:"active"`
+	NextRun          *time.Time `json:"next_run,omitempty"`
+	FailureThreshold int        `json:"failure_threshold"`
 }
 
 type Check struct {

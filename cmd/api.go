@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"pulse/internal/database"
+	"pulse/internal/incident"
 	"pulse/internal/monitor"
 	"pulse/internal/scheduler"
 	"pulse/internal/user"
@@ -44,10 +45,12 @@ func newAPI(ctx context.Context) (*api, error) {
 	monitorRepo := monitor.NewRepository(pool)
 	monitorService := monitor.NewService(monitorRepo)
 
+	incidentRepo := incident.NewRepository(pool)
+
 	// Scheduler and Worker
 	jobs := make(chan scheduler.Job)
 	sched := scheduler.NewScheduler(monitorRepo, jobs, 1*time.Second)
-	wrk := scheduler.NewWorker(monitorRepo, jobs)
+	wrk := scheduler.NewWorker(monitorRepo, incidentRepo, jobs)
 
 	// Router
 	r := chi.NewRouter()

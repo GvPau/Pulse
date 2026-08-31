@@ -20,6 +20,14 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, m *Monitor) (*Mo
 		return nil, errors.New("name and url are required")
 	}
 
+	// Default failure threshold to 3 if not set
+	if m.FailureThreshold == 0 {
+		m.FailureThreshold = 3
+	}
+	if m.FailureThreshold < 1 {
+		return nil, errors.New("failure_threshold must be at least 1")
+	}
+
 	m.ID = uuid.New()
 	m.UserID = userID
 
