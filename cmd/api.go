@@ -11,7 +11,6 @@ import (
 	"pulse/internal/monitor"
 	"pulse/internal/scheduler"
 	"pulse/internal/user"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -49,7 +48,7 @@ func newAPI(ctx context.Context) (*api, error) {
 
 	// Scheduler and Worker
 	jobs := make(chan scheduler.Job)
-	sched := scheduler.NewScheduler(monitorRepo, jobs, 1*time.Second)
+	sched := scheduler.NewScheduler(monitorRepo, jobs)
 	wrk := scheduler.NewWorker(monitorRepo, incidentRepo, jobs)
 
 	// Router
