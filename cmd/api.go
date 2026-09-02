@@ -11,6 +11,7 @@ import (
 	"pulse/internal/monitor"
 	"pulse/internal/scheduler"
 	"pulse/internal/user"
+	"uuid"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -39,17 +40,29 @@ func newAPI(ctx context.Context) (*api, error) {
 
 	// Dependecies
 	userRepo := user.NewRepository(pool)
-	userService := user.NewService(userRepo)
-
 	monitorRepo := monitor.NewRepository(pool)
-	monitorService := monitor.NewService(monitorRepo)
-
 	incidentRepo := incident.NewRepository(pool)
+
+	userService := user.NewService(userRepo)
 
 	// Scheduler and Worker
 	jobs := make(chan scheduler.Job)
 	sched := scheduler.NewScheduler(monitorRepo, jobs)
 	wrk := scheduler.NewWorker(monitorRepo, incidentRepo, jobs)
+
+	monitorService := monitor.NewService(monitorRepo,
+		func(ctx context.Context, id uuid.UUID) {
+			// Notify the scheduler about the new monitor
+			sched.Notify(ctx, scheduler.Event{Type: "add", MonitorId: id})
+		},
+		func(ctx context.Context, id uuid.UUID) {
+			// Notify the scheduler about the updated monitor
+			sched.Notify(ctx, scheduler.Event{Type: "update", MonitorId: id})
+		},
+		func(ctx context.Context, id uuid.UUID) {
+			// Notify the scheduler about the deleted monitor
+			sched.Notify(ctx, scheduler.Event{Type: "remove", MonitorId: id})
+		})
 
 	// Router
 	r := chi.NewRouter()

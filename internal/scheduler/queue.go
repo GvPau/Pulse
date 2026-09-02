@@ -82,3 +82,12 @@ func (q *queue) remove(monitorID uuid.UUID) {
 	}
 	heap.Remove(q, e.index)
 }
+
+func (q *queue) upsert(e *entry) {
+	if existing, ok := q.byID[e.monitorID]; ok {
+		existing.nextRun = e.nextRun
+		heap.Fix(q, existing.index)
+	} else {
+		q.push(e)
+	}
+}

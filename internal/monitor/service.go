@@ -8,11 +8,19 @@ import (
 )
 
 type Service struct {
-	repo *Repository
+	repo     *Repository
+	onCreate func(ctx context.Context, id uuid.UUID)
+	onUpdate func(ctx context.Context, id uuid.UUID)
+	onDelete func(ctx context.Context, id uuid.UUID)
 }
 
-func NewService(repo *Repository) *Service {
-	return &Service{repo: repo}
+func NewService(repo *Repository, onCreate, onUpdate, onDelete func(ctx context.Context, id uuid.UUID)) *Service {
+	return &Service{
+		repo:     repo,
+		onCreate: onCreate,
+		onUpdate: onUpdate,
+		onDelete: onDelete,
+	}
 }
 
 func (s *Service) Create(ctx context.Context, userID uuid.UUID, m *Monitor) (*Monitor, error) {
@@ -33,6 +41,10 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, m *Monitor) (*Mo
 
 	if err := s.repo.Create(ctx, m); err != nil {
 		return nil, fmt.Errorf("update monitor: %w", err)
+	}
+
+	if s.onCreate != nil {
+		s.onCreate(ctx, m.ID)
 	}
 
 	return m, nil
@@ -63,9 +75,22 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, m *Monitor) 
 		return fmt.Errorf("update monitor: %w", err)
 	}
 
+	if s.onUpdate != nil {
+		s.onUpdate(ctx, id)
+	}
+
 	return nil
 }
 
 func (s *Service) Delete(ctx context.Context, userID, id uuid.UUID) error {
-	return s.repo.Delete(ctx, userID, id)
+
+	if err := s.repo.Delete(ctx, userID, id); err != nil {
+		return fmt.Errorf("delete monitor: %w", err)
+	}
+
+	if s.onDelete != nil {
+		s.onDelete(ctx, id)
+	}
+
+	return nil
 }
