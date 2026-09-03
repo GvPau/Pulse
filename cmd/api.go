@@ -46,7 +46,8 @@ func newAPI(ctx context.Context) (*api, error) {
 	userService := user.NewService(userRepo)
 
 	// Scheduler and Worker
-	jobs := make(chan scheduler.Job)
+	const numWorkers = 3
+	jobs := make(chan scheduler.Job, numWorkers)
 	sched := scheduler.NewScheduler(monitorRepo, jobs)
 	wrk := scheduler.NewWorker(monitorRepo, incidentRepo, jobs)
 

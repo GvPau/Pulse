@@ -22,8 +22,13 @@ func main() {
 	}
 	defer app.pool.Close()
 
+	const numWorkers = 3
+
 	// Start background workers
-	go app.worker.Run(ctx)
+	for i := 0; i < numWorkers; i++ {
+		go app.worker.Run(ctx)
+	}
+
 	go app.scheduler.Run(ctx)
 
 	log.Printf("API up")
