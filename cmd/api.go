@@ -44,6 +44,7 @@ func newAPI(ctx context.Context) (*api, error) {
 	incidentRepo := incident.NewRepository(pool)
 
 	userService := user.NewService(userRepo)
+	incidentService := incident.NewService(incidentRepo)
 
 	// Scheduler and Worker
 	const numWorkers = 3
@@ -71,6 +72,7 @@ func newAPI(ctx context.Context) (*api, error) {
 
 	r.Route("/auth", user.Router(userService))
 	r.Route("/monitors", monitor.Router(monitorService))
+	r.Route("/incidents", incident.Router(incidentService))
 
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("OK"))

@@ -94,3 +94,10 @@ func (s *Service) Delete(ctx context.Context, userID, id uuid.UUID) error {
 
 	return nil
 }
+
+func (s *Service) ListChecks(ctx context.Context, userID, monitorID uuid.UUID, limit int) ([]Check, error) {
+	if _, err := s.repo.GetByID(ctx, userID, monitorID); err != nil {
+		return nil, fmt.Errorf("monitor not found: %w", err)
+	}
+	return s.repo.ListChecksByMonitor(ctx, monitorID, limit)
+}

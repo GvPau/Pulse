@@ -1,4 +1,4 @@
-package monitor
+package incident
 
 import (
 	"pulse/internal/auth"
@@ -12,11 +12,7 @@ func Router(service *Service) func(r chi.Router) {
 
 		handler := NewHandler(service)
 
-		r.Post("/", handler.Create)
 		r.Get("/", handler.List)
 		r.Get("/{id}", handler.Get)
-		r.Put("/{id}", handler.Update)
-		r.Delete("/{id}", handler.Delete)
-		r.Get("/{id}/checks", handler.ListChecks)
 	}
 }

@@ -3,6 +3,7 @@ package monitor
 import (
 	"context"
 	"fmt"
+	"uuid"
 )
 
 func (r *Repository) SaveMonitorCheck(ctx context.Context, c *Check) error {
@@ -16,4 +17,30 @@ func (r *Repository) SaveMonitorCheck(ctx context.Context, c *Check) error {
 	}
 
 	return nil
+}
+
+func (r *Repository) ListChecksByMonitor(ctx context.Context, monitorID uuid.UUID, limit int) ([]Check, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, monitor_id, status_code, response_time_ms, success, error, checked_at
+	FROM monitor_checks
+	WHERE monitor_id = $1
+	ORDER BY checked_at DESC
+	LIMIT $2`, monitorID, limit)
+
+	if err != nil {
+		return nil, fmt.Errorf("list monitor checks %w", err)
+	}
+	defer rows.Close()
+
+	var checks []Check
+	for rows.Next() {
+		var c Check
+		if err := rows.Scan(&c.ID, &c.MonitorID, &c.StatusCode, &c.ResponseTimeMS, &c.Success, &c.Error, &c.CheckedAt); err != nil {
+			return nil, fmt.Errorf("scan monitor check %w", err)
+		}
+
+		checks = append(checks, c)
+	}
+
+	return checks, rows.Err()
 }
