@@ -9,11 +9,17 @@ import (
 	"uuid"
 )
 
+type nextRunUpdate struct {
+	monitorID uuid.UUID
+	nextRun   time.Time
+}
+
 type Scheduler struct {
 	monitorRepo *monitor.Repository
-	jobs        chan<- Job // Only writes into the channel
-	q           *queue     // Priority queue for scheduling
-	events      chan Event // Channel for receiving monitor events
+	jobs        chan<- Job         // Only writes into the channel
+	q           *queue             // Priority queue for scheduling
+	events      chan Event         // Channel for receiving monitor events
+	flush       chan nextRunUpdate // Batch updates for nextRun
 }
 
 func NewScheduler(monitorRepo *monitor.Repository, jobs chan<- Job) *Scheduler {
@@ -21,7 +27,8 @@ func NewScheduler(monitorRepo *monitor.Repository, jobs chan<- Job) *Scheduler {
 		monitorRepo: monitorRepo,
 		jobs:        jobs,
 		q:           newQueue(),
-		events:      make(chan Event, 2), // Buffered channel to avoid blocking
+		events:      make(chan Event, 2),           // Buffered channel to avoid blocking
+		flush:       make(chan nextRunUpdate, 256), // 256 Max of updates per second in flush
 	}
 }
 
@@ -39,8 +46,9 @@ func (s *Scheduler) loadActiveMonitors(ctx context.Context) {
 		}
 
 		s.q.push(&entry{
-			monitorID: m.ID,
-			nextRun:   next,
+			monitorID:       m.ID,
+			nextRun:         next,
+			intervalSeconds: m.IntervalSeconds,
 		})
 	}
 
@@ -78,7 +86,7 @@ func (s *Scheduler) handleEvent(ctx context.Context, ev Event) {
 			next = *m.NextRun
 		}
 
-		s.q.push(&entry{monitorID: m.ID, nextRun: next})
+		s.q.push(&entry{monitorID: m.ID, nextRun: next, intervalSeconds: m.IntervalSeconds})
 		log.Printf("scheduler: added monitor %s to queue", ev.MonitorId)
 
 	case "update":
@@ -94,7 +102,7 @@ func (s *Scheduler) handleEvent(ctx context.Context, ev Event) {
 			log.Printf("scheduler: failed to update next run for monitor %s: %v", ev.MonitorId, err)
 		}
 
-		s.q.upsert(&entry{monitorID: m.ID, nextRun: next})
+		s.q.upsert(&entry{monitorID: m.ID, nextRun: next, intervalSeconds: m.IntervalSeconds})
 		log.Printf("scheduler: updated monitor %s in queue", ev.MonitorId)
 
 	case "remove":
@@ -108,6 +116,8 @@ func (s *Scheduler) Run(ctx context.Context) {
 	s.loadActiveMonitors(ctx)
 
 	var wg sync.WaitGroup
+	wg.Add(1)
+	go s.runFlusher(ctx, &wg)
 	defer func() {
 		wg.Wait()
 		close(s.jobs)
@@ -143,21 +153,22 @@ func (s *Scheduler) Run(ctx context.Context) {
 				s.dispatch(ctx, monitorID)
 			}(e.monitorID)
 
-			// Reschedule: fetch the intervald compute the new next run
-			m, err := s.monitorRepo.GetMonitorById(ctx, e.monitorID)
-			if err != nil {
-				// Monitor was deleted or deactivated, remove it from the queue
-				log.Printf("scheduler: failed to fetch monitor %s: %v, removing from queue", e.monitorID, err)
+			// Reschedule in memory using the interval store in the entry (no DB call)
+			if e.intervalSeconds <= 0 {
+				log.Printf("scheduler: monitor %s has invalid interval %d, removing from queue", e.monitorID, e.intervalSeconds)
 				s.q.remove(e.monitorID)
 				continue
 			}
 
-			newNext := time.Now().Add(time.Duration(m.IntervalSeconds) * time.Second)
-			if err := s.monitorRepo.UpdateNextRun(ctx, e.monitorID, newNext); err != nil {
-				log.Printf("scheduler: failed to update next run for monitor %s: %v", e.monitorID, err)
-			}
-
+			newNext := time.Now().Add(time.Duration(e.intervalSeconds) * time.Second)
 			s.q.update(e.monitorID, newNext)
+
+			// Queue persisted next_run for the batched flusher (non-blocking)
+			select {
+			case s.flush <- nextRunUpdate{monitorID: e.monitorID, nextRun: newNext}:
+			default:
+				log.Printf("scheduler: flush queue full, skipping db next_run for monitor %s", e.monitorID)
+			}
 			log.Printf("scheduler: rescheduled monitor %s to run at %s", e.monitorID, newNext.Format(time.RFC3339))
 
 		case ev := <-s.events:
@@ -165,4 +176,40 @@ func (s *Scheduler) Run(ctx context.Context) {
 			s.handleEvent(ctx, ev)
 		}
 	}
+}
+
+func (s *Scheduler) runFlusher(ctx context.Context, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	pending := make(map[uuid.UUID]time.Time)
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	flush := func(flushCtx context.Context) {
+		if len(pending) == 0 {
+			return
+		}
+
+		patches := make([]monitor.NextRunPatch, 0, len(pending))
+		for id, next := range pending {
+			patches = append(patches, monitor.NextRunPatch{ID: id, NextRun: next})
+		}
+		pending = make(map[uuid.UUID]time.Time)
+		if err := s.monitorRepo.UpdateNextRuns(flushCtx, patches); err != nil {
+			log.Printf("scheduler: batch next_run update failed %v", err)
+		}
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			flush(context.WithoutCancel(ctx))
+			return
+		case u := <-s.flush:
+			pending[u.monitorID] = u.nextRun
+		case <-ticker.C:
+			flush(ctx)
+		}
+	}
+
 }

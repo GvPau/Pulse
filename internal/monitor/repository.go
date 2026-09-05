@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 	"uuid"
 
@@ -218,4 +219,29 @@ func (r *Repository) CountConsecutiveFailures(ctx context.Context, monitorID uui
 	}
 
 	return count, rows.Err()
+}
+
+func (r *Repository) UpdateNextRuns(ctx context.Context, patches []NextRunPatch) error {
+	if len(patches) == 0 {
+		return nil
+	}
+
+	placeholders := make([]string, 0, len(patches))
+	args := make([]interface{}, 0, len(patches)*2)
+	for i, p := range patches {
+		placeholders = append(placeholders, fmt.Sprintf("($%d::uuid, $%d::timestamptz)", i*2+1, i*2+2))
+		args = append(args, p.ID, p.NextRun)
+	}
+
+	query := fmt.Sprintf(
+		`UPDATE monitors SET next_run = v.next_run
+		FROM (VALUES %s) as v(id, next_run)
+		WHERE monitors.id = v.id`, strings.Join(placeholders, ", "),
+	)
+
+	if _, err := r.pool.Exec(ctx, query, args...); err != nil {
+		return fmt.Errorf("update next runs batch: %w", err)
+	}
+
+	return nil
 }

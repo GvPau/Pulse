@@ -29,3 +29,8 @@ type Check struct {
 	Error          *string   `json:"error,omitempty"`
 	CheckedAt      time.Time `json:"checked_at"`
 }
+
+type NextRunPatch struct {
+	ID      uuid.UUID
+	NextRun time.Time
+}

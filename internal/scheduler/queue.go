@@ -7,9 +7,10 @@ import (
 )
 
 type entry struct {
-	monitorID uuid.UUID
-	nextRun   time.Time
-	index     int
+	monitorID       uuid.UUID
+	nextRun         time.Time
+	intervalSeconds int
+	index           int
 }
 
 type queue struct {
@@ -86,6 +87,7 @@ func (q *queue) remove(monitorID uuid.UUID) {
 func (q *queue) upsert(e *entry) {
 	if existing, ok := q.byID[e.monitorID]; ok {
 		existing.nextRun = e.nextRun
+		existing.intervalSeconds = e.intervalSeconds
 		heap.Fix(q, existing.index)
 	} else {
 		q.push(e)
