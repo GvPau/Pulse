@@ -1,7 +1,8 @@
 [build]
   cmd = "go build -o tmp/main.exe ./cmd"
-  bin = "tmp/main.exe"
+  entrypoint = ["tmp/main.exe"]
   include_ext = ["go"]
   exclude_dir = ["tmp"]
+  kill_delay = "2s"
 [env]
   DATABASE_URL = "postgres://postgres:postgres@localhost:5432/pulse?sslmode=disable"

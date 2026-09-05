@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"pulse/internal/monitor"
+	"sync"
 	"time"
 	"uuid"
 )
@@ -106,6 +107,12 @@ func (s *Scheduler) handleEvent(ctx context.Context, ev Event) {
 func (s *Scheduler) Run(ctx context.Context) {
 	s.loadActiveMonitors(ctx)
 
+	var wg sync.WaitGroup
+	defer func() {
+		wg.Wait()
+		close(s.jobs)
+	}()
+
 	for {
 		e := s.q.top()
 		if e == nil {
@@ -130,7 +137,11 @@ func (s *Scheduler) Run(ctx context.Context) {
 		case <-timer.C:
 
 			// Send the job to the worker in a goroutine so the scheduler keeps dispatching even if the worker is busy.
-			go s.dispatch(ctx, e.monitorID)
+			wg.Add(1)
+			go func(monitorID uuid.UUID) {
+				defer wg.Done()
+				s.dispatch(ctx, monitorID)
+			}(e.monitorID)
 
 			// Reschedule: fetch the intervald compute the new next run
 			m, err := s.monitorRepo.GetMonitorById(ctx, e.monitorID)
