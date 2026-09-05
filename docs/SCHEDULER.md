@@ -41,6 +41,71 @@ Date: 2026-09-03
 - Unbuffered channel = "rendezvous" (sender+receiver must meet); scheduler avoided blocking by dispatching in goroutine.
 - Pool => N goroutines competing on same channel => parallel checks.
 
+## Current data flow (as of 2026-09-05)
+
+Current runtime shape: one scheduler goroutine, N=3 worker goroutines sharing a single `jobs` channel, the HTTP server in its own goroutine, and a separate events channel between the monitor CRUD and the scheduler.
+
+- **One shared `jobs` channel** (`cmd/api.go:51`, buffered, size = `numWorkers` = 3). The scheduler writes into it as `chan<- Job`; every worker reads from it as `<-chan Job`. Each `Job` is delivered to a single available receiver (Go channel load-balancing) — there is no per-worker channel.
+- **Scheduler** (`internal/scheduler/scheduler.go`): loads active monitors into the min-heap queue on startup; each loop iteration takes the heap top, sleeps with a one-shot `time.NewTimer(time.Until(nextRun))`, and `select{}`s between `timer.C`, events, and shutdown. On fire: spawns a goroutine that runs `dispatch`, then (in the loop body) reschedules by `GetMonitorById` → recompute `next = now + interval` → `UpdateNextRun` (DB) → `q.update`. `dispatch` is a non-blocking write (`select { jobs <- Job; ctx.Done() }`).
+- **Workers** (`internal/scheduler/worker.go`): block on `for job := range w.jobs` and run `Process` on receipt: (1) re-read monitor, (2) `checker.Check`, (3) build `Check`, (4) `SaveMonitorCheck`, (5) `handleIncident` (success → resolve active incident; failure → open incident only when consecutive failures >= threshold and none active).
+- **Events** (`cmd/api.go:56-67`, `scheduler.go:59-105`): monitor `Create`/`Update`/`Delete` call `onCreate/onUpdate/onDelete` callbacks (after the repo op, in `internal/monitor/service.go`), which call `sched.Notify(ctx, Event{Type: "add"|"update"|"remove", MonitorID})`. `Notify` sends into `s.events` (buffered, size 2) **non-blocking** — if the buffer is full the event is dropped (logged). The scheduler loop receives from `s.events` and calls `handleEvent`: `add` → push; `update` → upsert + `UpdateNextRun`; `remove` → remove from queue. Only the `monitor` entity notifies; users/incidents do not.
+- **Shutdown** (graceful): on Ctrl+C the scheduler returns from `Run`, waits (`WaitGroup`) for every in-flight dispatch goroutine, and closes `s.jobs`; workers exit their `for range`; `main` shuts the HTTP server and closes the DB pool.
+
+```
+                    MAIN (goroutine) — cmd/main.go
+                      go app.scheduler.Run(ctx)        (1 goroutine)
+                      go app.worker.Run(ctx) x3        (3 goroutines)
+                      srv.ListenAndServe()  (goroutine, HTTP :8080)
+                      <-ctx.Done() => graceful shutdown (srv.Shutdown + pool.Close)
+        │                          │                              │
+        ▼                          ▼                              ▼
+┌─────────────────┐   ┌────────────────────────┐   ┌────────────────────────────┐
+│  HTTP (chi)     │   │  SCHEDULER (x1)        │   │  WORKERS (x3)              │
+│  :8080          │   │                        │   │                            │
+│  POST/PATCH/    │   │  loadActiveMonitors(): │   │  for job := range w.jobs   │
+│  DELETE monitors│   │  ListActive -> push    │   │  (bloqueo eficiente)       │
+└────────┬────────┘   └────────────┬───────────┘   └─────────────┬──────────────┘
+         │                        │                             ▲
+         │  CRUD (service.go)     ▼                             │
+         │  onXxx callback   ┌─────────────┐                    │
+         │                   │  queue      │                    │
+         │                   │ min-heap    │                    │
+         │                   │ por nextRun │                    │
+         │                   └──────┬──────┘                    │
+         │                          │ top() -> e                │
+         │                          ▼                           │
+         │                   time.NewTimer(Until(e.nextRun))    │
+         │                          │                           │
+         │                   select { ctx.Done · timer.C · <-s.events }
+         │                          │        │                  │
+         └──────────► s.events      │        ▼ timer.C          │
+                      (buffer 2,    │   dispatch() (goroutine)  │
+                      no bloqueante)│   jobs <- Job{ID}         │
+         ▼                          │        │                  │
+   handleEvent(ev)                  │        ▼                  │
+    add   -> push                   │  + reschedule:            │
+    update-> upsert + UpdateNextRun │  GetMonitorById ──────────┼───────► w.jobs
+    remove-> q.remove               │  UpdateNextRun(DB)        │        (MISMO canal)
+                                    │  q.update                 │        Process(ctx, job)
+                                    │                           │        1. GetMonitorById
+                                    │                           │        2. checker.Check
+                                    │                           │        3. build Check
+                                    │                           │        4. SaveMonitorCheck (DB)
+                                    │                           │        5. handleIncident
+                                    │                           │           success: resolve
+                                    │                           │           fail: abrir si fallos
+                                    │                           │                 >= threshold
+                                    │                           │                 y sin incidente activo
+```
+
+- `s.jobs` and `s.events` are two separate channels. `s.events` lives inside the Scheduler; events never go into the jobs channel.
+- `handleEvent` only fires from the Scheduler loop when it receives an event from `s.events` (the CRUD never touches the queue directly).
+
+Key properties:
+- `dispatch` runs in a goroutine so the scheduler never blocks even when every worker is busy; the reschedule happens in parallel with the worker's `Process`.
+- The two channels are separate: `s.jobs` (scheduler → workers, one shared channel) and `s.events` (CRUD → scheduler, buffer 2, drops when full).
+- `for job := range w.jobs` is an efficient blocking receive, not a spinning loop.
+
 ## Next session ideas
 - Test parallelism visibly: monitor `https://httpbin.org/delay/2` (2s) — 3 slow checks finish together, not 6s serial.
 - Consider extracting `numWorkers` to a shared const / env (currently duplicated in main.go & api.go).
