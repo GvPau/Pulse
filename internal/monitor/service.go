@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"pulse/internal/httpx"
 	"uuid"
 )
 
@@ -23,9 +24,33 @@ func NewService(repo *Repository, onCreate, onUpdate, onDelete func(ctx context.
 	}
 }
 
+var monitorSortColumns = map[string]string{
+	"name":             "name",
+	"created_at":       "created_at",
+	"interval_seconds": "interval_seconds",
+}
+
+type ListParams struct {
+	Page   int
+	Limit  int
+	Active *bool
+	Q      string
+	Sort   string
+	Order  string
+}
+
 func (s *Service) Create(ctx context.Context, userID uuid.UUID, m *Monitor) (*Monitor, error) {
-	if m.Name == "" || m.URL == "" {
-		return nil, errors.New("name and url are required")
+	fields := map[string]string{}
+	if m.Name == "" {
+		fields["name"] = "is required"
+	}
+
+	if m.URL == "" {
+		fields["url"] = "is required"
+	}
+
+	if len(fields) > 0 {
+		return nil, &httpx.ValidationError{Message: "validation failed", Fields: fields}
 	}
 
 	// Default failure threshold to 3 if not set
@@ -50,14 +75,14 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, m *Monitor) (*Mo
 	return m, nil
 }
 
-func (s *Service) List(ctx context.Context, userID uuid.UUID) ([]Monitor, error) {
-	m, err := s.repo.ListByUser(ctx, userID)
+func (s *Service) List(ctx context.Context, userID uuid.UUID, p ListParams) ([]Monitor, int, error) {
+	monitors, total, err := s.repo.ListByUser(ctx, userID, p)
 
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
-	return m, nil
+	return monitors, total, nil
 }
 
 func (s *Service) Get(ctx context.Context, userID, id uuid.UUID) (*Monitor, error) {
@@ -71,6 +96,17 @@ func (s *Service) Get(ctx context.Context, userID, id uuid.UUID) (*Monitor, erro
 }
 
 func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, m *Monitor) error {
+	fields := map[string]string{}
+	if m.Name == "" {
+		fields["name"] = "is required"
+	}
+	if m.URL == "" {
+		fields["url"] = "is required"
+	}
+	if len(fields) > 0 {
+		return &httpx.ValidationError{Message: "validation failed", Fields: fields}
+	}
+
 	if err := s.repo.Update(ctx, userID, id, m); err != nil {
 		return fmt.Errorf("update monitor: %w", err)
 	}

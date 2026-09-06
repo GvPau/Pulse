@@ -23,11 +23,13 @@ horizontally (one Docker pod now; external queue once warranted).
 
 ## Next steps
 
-### Phase 1 — API foundations (in progress)
-- Pagination, filtering, sorting on list endpoints (monitors, incidents, checks).
-- Consistent error contract (structured JSON errors, stable codes).
-- `healthz` / `readyz` endpoints.
-- Contract-first: document endpoints in `docs/API.md` as they are built.
+### Phase 1 — API foundations ✅ (06 Sep 2026)
+- **Error contract**: `{"error":{"code","message","details"}}`, codes `invalid_request`, `unauthorized`, `not_found`, `conflict`, `internal_error`. Validations → 400 with field-level `details`.
+- **Pagination**: `?page=&limit=` (default 1/20, max 100), envelope `{data, pagination:{page,limit,total,has_more}}`.
+- **Filters/sorts (monitors)**: `?q=` (ILIKE), `?active=true|false`, `?sort=name|created_at|interval_seconds&order=asc|desc`. Whitelist enforced.
+- **`healthz`/`readyz`**: liveness (always 200) + readiness (pool.Ping with 2s timeout, 503 on failure).
+- **Contract-first doc** (`docs/API.md`): *pendiente* — se añadirá como cierre de fase.
+- **Incidents/checks**: paginación y filtros pendientes para cuando se retomen esos endpoints.
 
 ### Phase 2 — Notifications
 - `notification_channels` (webhook first, email later via a provider such as Resend).

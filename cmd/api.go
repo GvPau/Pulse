@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"pulse/internal/database"
+	"pulse/internal/health"
 	"pulse/internal/incident"
 	"pulse/internal/monitor"
 	"pulse/internal/scheduler"
@@ -70,6 +71,8 @@ func newAPI(ctx context.Context) (*api, error) {
 	// Router
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
+
+	health.NewHealth(pool).Router(r)
 
 	r.Route("/auth", user.Router(userService))
 	r.Route("/monitors", monitor.Router(monitorService))

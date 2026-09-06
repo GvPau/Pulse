@@ -36,14 +36,47 @@ func (r *Repository) Create(ctx context.Context, m *Monitor) error {
 	return nil
 }
 
-func (r *Repository) ListByUser(ctx context.Context, userID uuid.UUID) ([]Monitor, error) {
-	rows, err := r.pool.Query(ctx,
+func (r *Repository) ListByUser(ctx context.Context, userID uuid.UUID, p ListParams) ([]Monitor, int, error) {
+	where := []string{"user_id = $1"}
+	args := []any{userID}
+
+	if p.Active != nil {
+		args = append(args, *p.Active)
+		where = append(where, fmt.Sprintf("active = $%d", len(args)))
+	}
+
+	if p.Q != "" {
+		args = append(args, "%"+p.Q+"%")
+		where = append(where, fmt.Sprintf("name ILIKE $%d", len(args)))
+	}
+
+	whereSQL := strings.Join(where, " AND ")
+
+	var total int
+	if err := r.pool.QueryRow(ctx, `SELECT count(*) FROM monitors WHERE `+whereSQL, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count monitors: %w", err)
+	}
+
+	orderCol := monitorSortColumns[p.Sort]
+	if orderCol == "" {
+		orderCol = "created_at"
+	}
+
+	orderDir := "ASC"
+	if p.Order == "desc" {
+		orderDir = "DESC"
+	}
+
+	args = append(args, p.Limit, (p.Page-1)*p.Limit)
+	query := fmt.Sprintf(
 		`SELECT id, user_id, name, url, method, interval_seconds, timeout_seconds, expected_status, active, created_at, updated_at
-		 FROM monitors WHERE user_id = $1 ORDER BY created_at`,
-		userID,
+		 FROM monitors WHERE %s ORDER BY %s %s LIMIT $%d OFFSET $%d`,
+		whereSQL, orderCol, orderDir, len(args)-1, len(args),
 	)
+
+	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("list monitors: %w", err)
+		return nil, 0, fmt.Errorf("list monitors: %w", err)
 	}
 	defer rows.Close()
 
@@ -51,15 +84,15 @@ func (r *Repository) ListByUser(ctx context.Context, userID uuid.UUID) ([]Monito
 	for rows.Next() {
 		var m Monitor
 		if err := rows.Scan(&m.ID, &m.UserID, &m.Name, &m.URL, &m.Method, &m.IntervalSeconds, &m.TimeoutSeconds, &m.ExpectedStatus, &m.Active, &m.CreatedAt, &m.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("scan monitor: %w", err)
+			return nil, 0, fmt.Errorf("scan monitor: %w", err)
 		}
 		monitors = append(monitors, m)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list monitors rows: %w", err)
+		return nil, 0, fmt.Errorf("list monitors rows: %w", err)
 	}
 
-	return monitors, nil
+	return monitors, total, nil
 }
 
 func (r *Repository) GetByID(ctx context.Context, userID, id uuid.UUID) (*Monitor, error) {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"pulse/internal/auth"
+	"pulse/internal/httpx"
 	"strconv"
 	"uuid"
 
@@ -26,18 +27,22 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 
 	var req Monitor
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		httpx.WriteError(w, http.StatusBadRequest, httpx.CodeInvalidRequest, "invalid request body")
 		return
 	}
 
 	monitor, err := h.service.Create(r.Context(), userID, &req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		var ve *httpx.ValidationError
+		if errors.As(err, &ve) {
+			httpx.WriteValidationError(w, ve)
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, httpx.CodeInternal, "failed to create monitor")
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(monitor)
+	httpx.WriteJSON(w, http.StatusCreated, monitor)
 }
 
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
@@ -45,83 +50,123 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 
 	if err != nil {
-		http.Error(w, "invalid monitor id", http.StatusBadRequest)
+		httpx.WriteError(w, http.StatusBadRequest, httpx.CodeInvalidRequest, "invalid monitor id")
 		return
 	}
 
 	monitor, err := h.service.Get(r.Context(), userID, id)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			http.Error(w, "monitor not found", http.StatusNotFound)
+			httpx.WriteError(w, http.StatusNotFound, httpx.CodeNotFound, "monitor not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httpx.WriteError(w, http.StatusInternalServerError, httpx.CodeInternal, "failed to get monitor")
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(monitor)
+	httpx.WriteJSON(w, http.StatusOK, monitor)
 }
 
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserIDFromContext(r.Context())
 
-	monitors, err := h.service.List(r.Context(), userID)
+	pp, err := httpx.ParsePageParams(r)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		var ve *httpx.ValidationError
+		if errors.As(err, &ve) {
+			httpx.WriteValidationError(w, ve)
+			return
+		}
+		httpx.WriteError(w, http.StatusBadRequest, httpx.CodeInvalidRequest, "invalid parameters")
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(monitors)
+	params := ListParams{
+		Page:  pp.Page,
+		Limit: pp.Limit,
+		Q:     r.URL.Query().Get("q"),
+		Sort:  r.URL.Query().Get("sort"),
+		Order: r.URL.Query().Get("order"),
+	}
+
+	if raw := r.URL.Query().Get("active"); raw != "" {
+		b, err := strconv.ParseBool(raw)
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, httpx.CodeInvalidRequest, "active must be true or false")
+			return
+		}
+		params.Active = &b
+	}
+
+	if params.Sort != "" {
+		if _, ok := monitorSortColumns[params.Sort]; !ok {
+			httpx.WriteError(w, http.StatusBadRequest, httpx.CodeInvalidRequest, "sort must be one of: name, created_at, interval_seconds")
+			return
+		}
+	}
+	if params.Order != "" && params.Order != "asc" && params.Order != "desc" {
+		httpx.WriteError(w, http.StatusBadRequest, httpx.CodeInvalidRequest, "order must be asc or desc")
+		return
+	}
+
+	monitors, total, err := h.service.List(r.Context(), userID, params)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, httpx.CodeInternal, "failed to list monitors")
+		return
+	}
+
+	httpx.WriteList(w, pp, total, monitors)
 }
 
 func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserIDFromContext(r.Context())
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		http.Error(w, "invalid monitor id", http.StatusBadRequest)
+		httpx.WriteError(w, http.StatusBadRequest, httpx.CodeInvalidRequest, "invalid monitor id")
 		return
 	}
 
 	var req Monitor
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		httpx.WriteError(w, http.StatusBadRequest, httpx.CodeInvalidRequest, "invalid request body")
 		return
 	}
 
 	if err := h.service.Update(r.Context(), userID, id, &req); err != nil {
-		if errors.Is(err, ErrNotFound) {
-			http.Error(w, "monitor not found", http.StatusNotFound)
+		var ve *httpx.ValidationError
+		if errors.As(err, &ve) {
+			httpx.WriteValidationError(w, ve)
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		if errors.Is(err, ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, httpx.CodeNotFound, "monitor not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, httpx.CodeInternal, "failed to update monitor")
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"message": "ok"})
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"message": "ok"})
 }
 
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserIDFromContext(r.Context())
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		http.Error(w, "invalid monitor id", http.StatusBadRequest)
+		httpx.WriteError(w, http.StatusBadRequest, httpx.CodeInvalidRequest, "invalid monitor id")
 		return
 	}
 
 	if err := h.service.Delete(r.Context(), userID, id); err != nil {
 		if errors.Is(err, ErrNotFound) {
-			http.Error(w, "monitor not found", http.StatusNotFound)
+			httpx.WriteError(w, http.StatusNotFound, httpx.CodeNotFound, "monitor not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httpx.WriteError(w, http.StatusInternalServerError, httpx.CodeInternal, "failed to delete monitor")
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"message": "ok"})
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"message": "ok"})
 }
 
 func (h *Handler) ListChecks(w http.ResponseWriter, r *http.Request) {
@@ -129,7 +174,7 @@ func (h *Handler) ListChecks(w http.ResponseWriter, r *http.Request) {
 
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		http.Error(w, "invalid monitor id", http.StatusBadRequest)
+		httpx.WriteError(w, http.StatusBadRequest, httpx.CodeInvalidRequest, "invalid monitor id")
 		return
 	}
 
@@ -138,7 +183,7 @@ func (h *Handler) ListChecks(w http.ResponseWriter, r *http.Request) {
 	if raw := r.URL.Query().Get("limit"); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil || n < 1 {
-			http.Error(w, "invalid limit", http.StatusBadRequest)
+			httpx.WriteError(w, http.StatusBadRequest, httpx.CodeInvalidRequest, "invalid limit")
 			return
 		}
 
@@ -148,15 +193,14 @@ func (h *Handler) ListChecks(w http.ResponseWriter, r *http.Request) {
 	checks, err := h.service.ListChecks(r.Context(), userID, id, limit)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			http.Error(w, "monitor not found", http.StatusNotFound)
+			httpx.WriteError(w, http.StatusNotFound, httpx.CodeNotFound, "monitor not found")
 			return
 		}
 
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httpx.WriteError(w, http.StatusInternalServerError, httpx.CodeInternal, "failed to list checks")
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(checks)
+	httpx.WriteJSON(w, http.StatusOK, checks)
 
 }
