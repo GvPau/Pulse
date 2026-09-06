@@ -36,18 +36,38 @@ Date: 2026-09-03
 - Wake-on-next still exact (5s spacing).
 - Slight note: 4 jobs vs 3 workers at once → one job waits for a free slot (expected).
 
+## Done (Option B — scheduler hot path without DB)
+Date: 2026-09-06
+
+- `internal/monitor/monitor.go` — `NextRunPatch{ID, NextRun}`.
+- `internal/scheduler/queue.go` — `entry` stores `intervalSeconds`, hydrated from `ListActive` at startup and on add/update.
+- `internal/scheduler/scheduler.go`:
+  - `nextRunUpdate{monitorID, nextRun}` + `flush chan nextRunUpdate` (buffered, 256).
+  - Hot loop: on `timer.C` → dispatch in a goroutine → reschedule **in memory** (`newNext = now + intervalSeconds` from the entry, `q.update`) → non-blocking send to `flush`. The scheduler no longer calls the DB per check (the worker's `Process` keeps its own `GetMonitorById`).
+  - `runFlusher` goroutine (1s ticker): dedups pending into a `map[uuid.UUID]time.Time`; flushes in one batched `UpdateNextRuns` (`UPDATE ... FROM (VALUES ...)`); on `ctx.Done` does a final flush with `context.WithoutCancel(ctx)`. Waited via WaitGroup before `close(s.jobs)`.
+- `internal/monitor/repository.go` — `UpdateNextRuns` batched multi-row update.
+- Trade-off: `next_run` may be up to 1s stale after a crash; no defensive `GetMonitorById` in the scheduler loop (ghost cleanup is handled by the worker, below).
+- Live run logs: 10s/30s cadence held with zero per-check DB calls; graceful shutdown flushed and exited clean.
+
+## Done (worker cleanup of ghost monitors)
+Date: 2026-09-06
+
+- `Worker` gains `notify func(context.Context, Event)`, wired to `sched.Notify` in `cmd/api.go`.
+- In `Process`, when `GetMonitorById` returns `monitor.ErrNotFound`, the worker emits a `remove` event so the scheduler drops the ghost entry instead of rescheduling it forever.
+- Verified by deleting a monitor row directly in Postgres while the API ran: `worker: monitor ... not found, skipping` → `scheduler: removed monitor ... from queue`, and the monitor never polled again.
+
 ## Concept notes
 - Bottleneck was the SINGLE worker (`for job := range w.jobs` processes one `Process` end-to-end, incl. HTTP, serial).
 - Unbuffered channel = "rendezvous" (sender+receiver must meet); scheduler avoided blocking by dispatching in goroutine.
 - Pool => N goroutines competing on same channel => parallel checks.
 
-## Current data flow (as of 2026-09-05)
+## Current data flow (as of 2026-09-06)
 
 Current runtime shape: one scheduler goroutine, N=3 worker goroutines sharing a single `jobs` channel, the HTTP server in its own goroutine, and a separate events channel between the monitor CRUD and the scheduler.
 
 - **One shared `jobs` channel** (`cmd/api.go:51`, buffered, size = `numWorkers` = 3). The scheduler writes into it as `chan<- Job`; every worker reads from it as `<-chan Job`. Each `Job` is delivered to a single available receiver (Go channel load-balancing) — there is no per-worker channel.
-- **Scheduler** (`internal/scheduler/scheduler.go`): loads active monitors into the min-heap queue on startup; each loop iteration takes the heap top, sleeps with a one-shot `time.NewTimer(time.Until(nextRun))`, and `select{}`s between `timer.C`, events, and shutdown. On fire: spawns a goroutine that runs `dispatch`, then (in the loop body) reschedules by `GetMonitorById` → recompute `next = now + interval` → `UpdateNextRun` (DB) → `q.update`. `dispatch` is a non-blocking write (`select { jobs <- Job; ctx.Done() }`).
-- **Workers** (`internal/scheduler/worker.go`): block on `for job := range w.jobs` and run `Process` on receipt: (1) re-read monitor, (2) `checker.Check`, (3) build `Check`, (4) `SaveMonitorCheck`, (5) `handleIncident` (success → resolve active incident; failure → open incident only when consecutive failures >= threshold and none active).
+- **Scheduler** (`internal/scheduler/scheduler.go`): loads active monitors into the min-heap queue on startup; each loop iteration takes the heap top, sleeps with a one-shot `time.NewTimer(time.Until(nextRun))`, and `select{}`s between `timer.C`, events, and shutdown. On fire: spawns a goroutine that runs `dispatch` (non-blocking write `select { jobs <- Job; ctx.Done() }`), then in the loop body reschedules **in memory — no DB call** — from the `intervalSeconds` kept in the entry: `q.update(monitorID, now+interval)` plus a non-blocking send to `s.flush` (buffered `nextRunUpdate`). A `runFlusher` goroutine (1s ticker, deduped `map[uuid.UUID]time.Time`) persists them in one batched `UpdateNextRuns` and, on shutdown, flushes the remainder with `context.WithoutCancel`.
+- **Workers** (`internal/scheduler/worker.go`): block on `for job := range w.jobs` and run `Process` on receipt: (1) re-read monitor, (2) `checker.Check`, (3) build `Check`, (4) `SaveMonitorCheck`, (5) `handleIncident` (success → resolve active incident; failure → open incident only when consecutive failures >= threshold and none active). If step 1 returns `monitor.ErrNotFound`, the worker emits a `remove` event so the scheduler drops the ghost entry.
 - **Events** (`cmd/api.go:56-67`, `scheduler.go:59-105`): monitor `Create`/`Update`/`Delete` call `onCreate/onUpdate/onDelete` callbacks (after the repo op, in `internal/monitor/service.go`), which call `sched.Notify(ctx, Event{Type: "add"|"update"|"remove", MonitorID})`. `Notify` sends into `s.events` (buffered, size 2) **non-blocking** — if the buffer is full the event is dropped (logged). The scheduler loop receives from `s.events` and calls `handleEvent`: `add` → push; `update` → upsert + `UpdateNextRun`; `remove` → remove from queue. Only the `monitor` entity notifies; users/incidents do not.
 - **Shutdown** (graceful): on Ctrl+C the scheduler returns from `Run`, waits (`WaitGroup`) for every in-flight dispatch goroutine, and closes `s.jobs`; workers exit their `for range`; `main` shuts the HTTP server and closes the DB pool.
 
@@ -77,23 +97,19 @@ Current runtime shape: one scheduler goroutine, N=3 worker goroutines sharing a 
          │                   time.NewTimer(Until(e.nextRun))    │
          │                          │                           │
          │                   select { ctx.Done · timer.C · <-s.events }
-         │                          │        │                  │
+│                          │        │                  │
          └──────────► s.events      │        ▼ timer.C          │
                       (buffer 2,    │   dispatch() (goroutine)  │
-                      no bloqueante)│   jobs <- Job{ID}         │
-         ▼                          │        │                  │
-   handleEvent(ev)                  │        ▼                  │
-    add   -> push                   │  + reschedule:            │
-    update-> upsert + UpdateNextRun │  GetMonitorById ──────────┼───────► w.jobs
-    remove-> q.remove               │  UpdateNextRun(DB)        │        (MISMO canal)
-                                    │  q.update                 │        Process(ctx, job)
-                                    │                           │        1. GetMonitorById
-                                    │                           │        2. checker.Check
-                                    │                           │        3. build Check
-                                    │                           │        4. SaveMonitorCheck (DB)
-                                    │                           │        5. handleIncident
-                                    │                           │           success: resolve
-                                    │                           │           fail: abrir si fallos
+                       no bloqueante)│   jobs <- Job{ID} ────────┴───────► w.jobs
+         ▼                          │                           │        (MISMO canal)
+   handleEvent(ev)                  │  + reschedule (mem, no DB)│        Process(ctx, job)
+    add   -> push                   │  newNext=now+interval     │        1. GetMonitorById
+    update-> upsert + UpdateNextRun │  q.update(newNext)        │        2. checker.Check
+    remove-> q.remove               │  s.flush <- newNext       │        3. build Check
+                                    │  (runFlusher)             │        4. SaveMonitorCheck (DB)
+                                    │   1s ticker, dedup map    │        5. handleIncident
+                                    │   UpdateNextRuns (1 batch)│           success: resolve
+                                    │   ctx.Done → flush final  │           fail: abrir si fallos
                                     │                           │                 >= threshold
                                     │                           │                 y sin incidente activo
 ```
@@ -107,9 +123,9 @@ Key properties:
 - `for job := range w.jobs` is an efficient blocking receive, not a spinning loop.
 
 ## Next session ideas
-- Test parallelism visibly: monitor `https://httpbin.org/delay/2` (2s) — 3 slow checks finish together, not 6s serial.
-- Consider extracting `numWorkers` to a shared const / env (currently duplicated in main.go & api.go).
-- Consider a persistent view of `next_run` drift: with pool, check execution time approximates planned nextRun better than with 1 worker.
+- Extract `numWorkers` to a shared const / env (currently duplicated in main.go & api.go).
+- Forward-looking work lives in `docs/ROADMAP.md` (Phase 1 next: pagination/filter/sort, error contract, health endpoints).
+- Option B is in place; a future refinement would be comparing in-memory `nextRun` against the DB after a restart to detect drift.
 
 ## Notes / observations
 - Import "uuid" used everywhere but `go.mod` declares no uuid dependency — worth checking `go build`.

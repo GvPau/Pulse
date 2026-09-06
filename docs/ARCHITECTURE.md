@@ -1,6 +1,6 @@
 # Pulse Architecture
 
-Pulse is a Go backend with a React frontend and PostgreSQL database.
+Pulse is a Go backend with a React frontend and PostgreSQL database. Frontends live in separate repos (not built yet).
 
 The backend initially runs as a single Go process containing:
 
@@ -15,82 +15,106 @@ PostgreSQL is shared by all components.
 
     pulse/
     ├── cmd/
-    │   └── api/
-    │       └── main.go
+    │   ├── main.go          (entry point + launch)
+    │   └── api.go           (dependency wiring / composition)
     │
     ├── internal/
     │   ├── monitor/
     │   │   ├── handler.go
+    │   │   ├── router.go
     │   │   ├── service.go
     │   │   ├── repository.go
-    │   │   └── model.go
+    │   │   ├── monitor.go
+    │   │   └── monitor_check_repository.go
     │   │
     │   ├── incident/
+    │   │   ├── handler.go
+    │   │   ├── router.go
     │   │   ├── service.go
     │   │   ├── repository.go
-    │   │   └── model.go
+    │   │   └── incident.go
     │   │
     │   ├── user/
+    │   │   ├── handler.go
+    │   │   ├── router.go
+    │   │   ├── service.go
     │   │   ├── repository.go
-    │   │   └── model.go
+    │   │   └── user.go
+    │   │
+    │   ├── auth/
+    │   │   ├── jwt.go
+    │   │   └── middleware.go
+    │   │
+    │   ├── scheduler/
+    │   │   ├── scheduler.go
+    │   │   ├── queue.go
+    │   │   ├── worker.go
+    │   │   ├── job.go
+    │   │   └── event.go
     │   │
     │   ├── checker/
     │   │   └── checker.go
     │   │
-    │   ├── scheduler/
-    │   │   └── scheduler.go
+    │   ├── shared/
+    │   │   └── model.go
     │   │
     │   └── database/
     │       └── postgres.go
     │
     ├── migrations/
+    ├── docs/
     ├── go.mod
     ├── go.sum
-    ├── Dockerfile
-    └── docker-compose.yml
+    ├── docker-compose.yml
+    └── (no Dockerfile yet — single process, one pod planned)
 
 ## File Responsibilities
 
-### `cmd/api/main.go`
+### `cmd/main.go`
 
-Application entry point.
+Application entry point. Signals a context, starts scheduler + worker goroutines and the HTTP server, and handles graceful shutdown.
 
-Responsible for initializing and starting:
+### `cmd/api.go`
 
-- PostgreSQL connection
-- Services
-- Job channel
-- Workers
-- Scheduler
-- HTTP server
-
-It also handles graceful shutdown.
+Composition/wiring (not a handler): builds repositories, services, the scheduler and workers, and the chi router. It also wires the monitor service to the scheduler via event callbacks (`add` / `update` / `remove`) and gives the workers the same `sched.Notify` so they can report ghost monitors.
 
 ### `internal/monitor/`
 
 Everything related to monitors.
 
 - `handler.go` — HTTP handlers for monitor endpoints.
-- `service.go` — Monitor business logic.
+- `router.go` — chi router.
+- `service.go` — Monitor business logic + scheduler event callbacks.
 - `repository.go` — PostgreSQL queries for monitors.
-- `model.go` — Monitor data structures.
+- `monitor.go` — Monitor data structures.
+- `monitor_check_repository.go` — check result queries.
 
 ### `internal/incident/`
 
 Everything related to incidents.
 
+- `handler.go` — HTTP handlers.
+- `router.go` — chi router.
 - `service.go` — Incident creation, updating and resolution.
 - `repository.go` — PostgreSQL queries for incidents.
-- `model.go` — Incident data structures.
+- `incident.go` — Incident data structures.
 
 ### `internal/user/`
 
 User-related database operations.
 
+- `handler.go` — HTTP handlers.
+- `router.go` — chi router.
+- `service.go` — User business logic (registration, login).
 - `repository.go` — PostgreSQL queries for users.
-- `model.go` — User data structures.
+- `user.go` — User data structures.
 
-Authentication will be added later and will remain separate from the monitoring domain.
+### `internal/auth/`
+
+Authentication, separate from the monitoring domain.
+
+- `jwt.go` — JWT signing/validation.
+- `middleware.go` — protects routes that require a logged-in user.
 
 ### `internal/checker/checker.go`
 
@@ -105,19 +129,21 @@ It receives a monitor and returns the result:
 
 The checker does not know about HTTP API handlers or React.
 
-### `internal/scheduler/scheduler.go`
+### `internal/scheduler/`
 
 Responsible for deciding **when a monitor needs to be checked**.
+
+- `scheduler.go` — main loop, event handling, and the `runFlusher` goroutine.
+- `queue.go` — min-heap priority queue ordered by `nextRun`.
+- `worker.go` — executes jobs (via the checker) and manages incidents.
+- `job.go` / `event.go` — `Job` and `Event` types.
 
 The scheduler:
 
 1. Loads active monitors.
-2. Keeps track of when each monitor should run next.
-3. Creates a job when a monitor is due.
-4. Sends the job to the job channel.
-5. Updates the monitor's next execution time.
-
-The scheduler does not execute HTTP requests itself.
+2. Keeps track of when each monitor should run next (in memory, from each monitor's interval).
+3. Creates a job when a monitor is due and sends it to the job channel.
+4. Reschedules in memory without DB calls (Option B); a flusher goroutine persists `next_run` batches every second.
 
 ### `internal/database/postgres.go`
 
