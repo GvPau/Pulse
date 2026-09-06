@@ -50,7 +50,8 @@ func newAPI(ctx context.Context) (*api, error) {
 	const numWorkers = 3
 	jobs := make(chan scheduler.Job, numWorkers)
 	sched := scheduler.NewScheduler(monitorRepo, jobs)
-	wrk := scheduler.NewWorker(monitorRepo, incidentRepo, jobs)
+	wrk := scheduler.NewWorker(monitorRepo, incidentRepo, jobs,
+		func(ctx context.Context, ev scheduler.Event) { sched.Notify(ctx, ev) })
 
 	monitorService := monitor.NewService(monitorRepo,
 		func(ctx context.Context, id uuid.UUID) {

@@ -15,10 +15,11 @@ type Worker struct {
 	monitorRepo  *monitor.Repository
 	incidentRepo *incident.Repository
 	jobs         <-chan Job
+	notify       func(context.Context, Event)
 }
 
-func NewWorker(monitorRepo *monitor.Repository, incidentRepo *incident.Repository, jobs <-chan Job) *Worker {
-	return &Worker{monitorRepo: monitorRepo, incidentRepo: incidentRepo, jobs: jobs}
+func NewWorker(monitorRepo *monitor.Repository, incidentRepo *incident.Repository, jobs <-chan Job, notify func(context.Context, Event)) *Worker {
+	return &Worker{monitorRepo: monitorRepo, incidentRepo: incidentRepo, jobs: jobs, notify: notify}
 }
 
 func (w *Worker) Run(ctx context.Context) {
@@ -69,6 +70,9 @@ func (w *Worker) Process(ctx context.Context, j Job) {
 	m, err := w.monitorRepo.GetMonitorById(ctx, j.MonitorID)
 	if err != nil {
 		// Monitor does not exist or is not active
+		if errors.Is(err, monitor.ErrNotFound) {
+			w.notify(ctx, Event{Type: "remove", MonitorId: j.MonitorID})
+		}
 		log.Printf("worker: monitor %s not found, skipping: %v", j.MonitorID, err)
 		return
 	}
