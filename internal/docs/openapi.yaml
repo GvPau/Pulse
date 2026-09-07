@@ -1,0 +1,689 @@
+openapi: 3.0.3
+
+info:
+  title: Pulse API
+  description: |
+    Backend API for the Pulse uptime monitoring service.
+
+    All resources are user-scoped: endpoints under a JWT return only the
+    authenticated user's data and 404 (not 403) when a resource belongs to
+    someone else.
+
+    - Errors follow a single contract: `{"error":{"code","message","details"}}`.
+    - List endpoints paginate with `?page=&limit=` and return an envelope:
+      `{"data":[...],"pagination":{"page","limit","total","has_more"}}`.
+    - Interactive docs are served by this same API at `GET /docs`.
+  version: 0.1.0
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+tags:
+  - name: Health
+  - name: Auth
+  - name: Monitors
+  - name: Incidents
+
+security:
+  - bearerAuth: []
+
+paths:
+  /healthz:
+    get:
+      tags: [Health]
+      summary: Liveness probe
+      description: Always returns 200 while the process is alive.
+      operationId: healthz
+      security: []
+      responses:
+        "200":
+          description: Alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  /readyz:
+    get:
+      tags: [Health]
+      summary: Readiness probe
+      description: Pings the database with a 2s timeout to decide readiness.
+      operationId: readyz
+      security: []
+      responses:
+        "200":
+          description: Ready (database reachable)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ready
+        "503":
+          description: Database unreachable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /:
+    get:
+      tags: [Health]
+      summary: Root placeholder
+      description: Plain-text banner, not part of the API contract.
+      operationId: root
+      security: []
+      responses:
+        "200":
+          description: Plain-text OK
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: OK
+
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a user
+      description: Creates a user and returns a JWT session token.
+      operationId: register
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthRequest"
+      responses:
+        "200":
+          description: Register success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "400":
+          description: Invalid payload, or email/password missing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login with email and password
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthRequest"
+      responses:
+        "200":
+          description: Login success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "401":
+          description: Invalid email or password
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /monitors:
+    get:
+      tags: [Monitors]
+      summary: List monitors
+      description: |
+        Lists the caller's monitors with optional filtering, sorting and
+        pagination.
+      operationId: listMonitors
+      parameters:
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+        - $ref: "#/components/parameters/QQuery"
+        - $ref: "#/components/parameters/ActiveQuery"
+        - $ref: "#/components/parameters/SortQuery"
+        - $ref: "#/components/parameters/OrderQuery"
+      responses:
+        "200":
+          description: Paginated monitor list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MonitorListResponse"
+        "400":
+          description: Invalid query parameters (active, sort, order, page, limit)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      tags: [Monitors]
+      summary: Create a monitor
+      operationId: createMonitor
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MonitorRequest"
+      responses:
+        "201":
+          description: Created monitor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Monitor"
+        "400":
+          description: Invalid body, or validation failed with field details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /monitors/{id}:
+    parameters:
+      - $ref: "#/components/parameters/MonitorIdPath"
+    get:
+      tags: [Monitors]
+      summary: Get a monitor
+      operationId: getMonitor
+      responses:
+        "200":
+          description: The monitor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Monitor"
+        "400":
+          description: id is not a valid UUID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Monitor does not exist or belongs to another user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      tags: [Monitors]
+      summary: Update a monitor
+      description: |
+        Full update: name, url, method, expected_status, interval_seconds,
+        timeout_seconds and active are all overwritten; omitted fields are reset
+        to their zero values.
+      operationId: updateMonitor
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MonitorRequest"
+      responses:
+        "200":
+          description: Update accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageOk"
+        "400":
+          description: Invalid id, invalid body, or validation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Monitor does not exist or belongs to another user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      tags: [Monitors]
+      summary: Delete a monitor
+      operationId: deleteMonitor
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageOk"
+        "400":
+          description: id is not a valid UUID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Monitor does not exist or belongs to another user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /monitors/{id}/checks:
+    parameters:
+      - $ref: "#/components/parameters/MonitorIdPath"
+    get:
+      tags: [Monitors]
+      summary: List check history for a monitor
+      description: |
+        Returns the monitor's checks, newest first (fixed ORDER BY checked_at DESC).
+        The `success` filter narrows to passing/failing checks.
+      operationId: listMonitorChecks
+      parameters:
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+        - $ref: "#/components/parameters/SuccessQuery"
+      responses:
+        "200":
+          description: Paginated check list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CheckListResponse"
+        "400":
+          description: Invalid id, pagination, or success value
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Monitor does not exist or belongs to another user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /incidents:
+    parameters:
+      - $ref: "#/components/parameters/MonitorIdQuery"
+    get:
+      tags: [Incidents]
+      summary: List incidents
+      description: |
+        Lists the caller's incidents. Optional `?monitor_id=` filter.
+
+        Note: incidents still use the legacy plain-JSON format (no pagination
+        envelope). Migration to the standard contract is pending.
+      operationId: listIncidents
+      responses:
+        "200":
+          description: Incident list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Incident"
+        "400":
+          description: monitor_id is not a valid UUID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid bearer token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /incidents/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IncidentIdPath"
+    get:
+      tags: [Incidents]
+      summary: Get an incident
+      operationId: getIncident
+      responses:
+        "200":
+          description: The incident
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Incident"
+        "400":
+          description: id is not a valid UUID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Incident does not exist or belongs to another user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    MonitorIdPath:
+      name: id
+      in: path
+      required: true
+      description: Monitor UUID
+      schema:
+        type: string
+        format: uuid
+    IncidentIdPath:
+      name: id
+      in: path
+      required: true
+      description: Incident UUID
+      schema:
+        type: string
+        format: uuid
+    PageQuery:
+      name: page
+      in: query
+      description: Page number, 1-based.
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    LimitQuery:
+      name: limit
+      in: query
+      description: Items per page.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    QQuery:
+      name: q
+      in: query
+      description: Case-insensitive substring match on the monitor name.
+      schema:
+        type: string
+    ActiveQuery:
+      name: active
+      in: query
+      description: Filter by active state.
+      schema:
+        type: boolean
+    SortQuery:
+      name: sort
+      in: query
+      description: Sort column. Whitelist enforced.
+      schema:
+        type: string
+        enum: [name, created_at, interval_seconds]
+        default: created_at
+    OrderQuery:
+      name: order
+      in: query
+      description: Sort direction.
+      schema:
+        type: string
+        enum: [asc, desc]
+        default: asc
+    SuccessQuery:
+      name: success
+      in: query
+      description: Filter checks by result.
+      schema:
+        type: boolean
+    MonitorIdQuery:
+      name: monitor_id
+      in: query
+      description: Filter incidents by monitor UUID.
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: "#/components/schemas/Error"
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Stable machine-readable error code.
+          enum: [invalid_request, unauthorized, not_found, conflict, internal_error]
+        message:
+          type: string
+        details:
+          type: object
+          description: Per-field validation messages; present only when a validation fails.
+          additionalProperties:
+            type: string
+
+    AuthRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 1
+
+    TokenResponse:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+          description: JWT session token.
+
+    MessageOk:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+          example: ok
+
+    Pagination:
+      type: object
+      required: [page, limit, total, has_more]
+      properties:
+        page:
+          type: integer
+          example: 1
+        limit:
+          type: integer
+          example: 20
+        total:
+          type: integer
+          example: 42
+        has_more:
+          type: boolean
+          example: true
+
+    MonitorRequest:
+      type: object
+      description: Body for create/update actions.
+      required: [name, url, method, expected_status, interval_seconds, timeout_seconds]
+      properties:
+        name:
+          type: string
+        url:
+          type: string
+        method:
+          type: string
+          example: GET
+        expected_status:
+          type: integer
+          example: 200
+        interval_seconds:
+          type: integer
+          example: 60
+        timeout_seconds:
+          type: integer
+          example: 5
+        active:
+          type: boolean
+          description: Defaults to false; a monitor must opt in to be scheduled.
+          default: false
+        failure_threshold:
+          type: integer
+          description: Consecutive failures before an incident opens. Defaults to 3.
+          default: 3
+          minimum: 1
+
+    Monitor:
+      type: object
+      required:
+        - id
+        - user_id
+        - name
+        - url
+        - method
+        - expected_status
+        - interval_seconds
+        - timeout_seconds
+        - active
+        - failure_threshold
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        url:
+          type: string
+        method:
+          type: string
+          example: GET
+        expected_status:
+          type: integer
+        interval_seconds:
+          type: integer
+        timeout_seconds:
+          type: integer
+        active:
+          type: boolean
+        next_run:
+          type: string
+          format: date-time
+          nullable: true
+          description: Next scheduled run; null when the monitor is inactive.
+        failure_threshold:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    MonitorListResponse:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Monitor"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+
+    Check:
+      type: object
+      required: [id, monitor_id, response_time_ms, success, checked_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        monitor_id:
+          type: string
+          format: uuid
+        status_code:
+          type: integer
+          nullable: true
+          description: HTTP status observed; null when the request failed to connect.
+        response_time_ms:
+          type: integer
+        success:
+          type: boolean
+        error:
+          type: string
+          nullable: true
+        checked_at:
+          type: string
+          format: date-time
+
+    CheckListResponse:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Check"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+
+    Incident:
+      type: object
+      required: [id, monitor_id, started_at, status, failure_count, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        monitor_id:
+          type: string
+          format: uuid
+        started_at:
+          type: string
+          format: date-time
+        resolved_at:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          type: string
+          enum: [active, resolved]
+        failure_count:
+          type: integer
+        created_at:
+          type: string
+          format: date-time

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"pulse/internal/database"
+	"pulse/internal/docs"
 	"pulse/internal/health"
 	"pulse/internal/incident"
 	"pulse/internal/monitor"
@@ -77,6 +78,8 @@ func newAPI(ctx context.Context) (*api, error) {
 	r.Route("/auth", user.Router(userService))
 	r.Route("/monitors", monitor.Router(monitorService))
 	r.Route("/incidents", incident.Router(incidentService))
+
+	r.Mount("/docs", docs.Router())
 
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("OK"))
