@@ -20,8 +20,6 @@ func NewHandler(service *Service) *Handler {
 	return &Handler{service: service}
 }
 
-var defaultChecksLimit = 50
-
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserIDFromContext(r.Context())
 
@@ -178,19 +176,29 @@ func (h *Handler) ListChecks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Optional ?limit= query param, default 50
-	limit := defaultChecksLimit
-	if raw := r.URL.Query().Get("limit"); raw != "" {
-		n, err := strconv.Atoi(raw)
-		if err != nil || n < 1 {
-			httpx.WriteError(w, http.StatusBadRequest, httpx.CodeInvalidRequest, "invalid limit")
+	pp, err := httpx.ParsePageParams(r)
+	if err != nil {
+		var ve *httpx.ValidationError
+		if errors.As(err, &ve) {
+			httpx.WriteValidationError(w, ve)
 			return
 		}
-
-		limit = n
+		httpx.WriteError(w, http.StatusBadRequest, httpx.CodeInvalidRequest, "invalid parameters")
+		return
 	}
 
-	checks, err := h.service.ListChecks(r.Context(), userID, id, limit)
+	params := CheckListParams{Page: pp.Page, Limit: pp.Limit}
+
+	if raw := r.URL.Query().Get("success"); raw != "" {
+		b, err := strconv.ParseBool(raw)
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, httpx.CodeInvalidRequest, "success must be true or false")
+			return
+		}
+		params.Success = &b
+	}
+
+	checks, total, err := h.service.ListChecks(r.Context(), userID, id, params)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			httpx.WriteError(w, http.StatusNotFound, httpx.CodeNotFound, "monitor not found")
@@ -201,6 +209,6 @@ func (h *Handler) ListChecks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	httpx.WriteJSON(w, http.StatusOK, checks)
+	httpx.WriteList(w, pp, total, checks)
 
 }

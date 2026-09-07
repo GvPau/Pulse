@@ -69,7 +69,7 @@ func (r *Repository) ListByUser(ctx context.Context, userID uuid.UUID, p ListPar
 
 	args = append(args, p.Limit, (p.Page-1)*p.Limit)
 	query := fmt.Sprintf(
-		`SELECT id, user_id, name, url, method, interval_seconds, timeout_seconds, expected_status, active, created_at, updated_at
+		`SELECT id, user_id, name, url, method, interval_seconds, timeout_seconds, expected_status, active, created_at, updated_at, failure_threshold
 		 FROM monitors WHERE %s ORDER BY %s %s LIMIT $%d OFFSET $%d`,
 		whereSQL, orderCol, orderDir, len(args)-1, len(args),
 	)
@@ -83,7 +83,7 @@ func (r *Repository) ListByUser(ctx context.Context, userID uuid.UUID, p ListPar
 	var monitors []Monitor
 	for rows.Next() {
 		var m Monitor
-		if err := rows.Scan(&m.ID, &m.UserID, &m.Name, &m.URL, &m.Method, &m.IntervalSeconds, &m.TimeoutSeconds, &m.ExpectedStatus, &m.Active, &m.CreatedAt, &m.UpdatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.UserID, &m.Name, &m.URL, &m.Method, &m.IntervalSeconds, &m.TimeoutSeconds, &m.ExpectedStatus, &m.Active, &m.CreatedAt, &m.UpdatedAt, &m.FailureThreshold); err != nil {
 			return nil, 0, fmt.Errorf("scan monitor: %w", err)
 		}
 		monitors = append(monitors, m)

@@ -39,6 +39,12 @@ type ListParams struct {
 	Order  string
 }
 
+type CheckListParams struct {
+	Page    int
+	Limit   int
+	Success *bool
+}
+
 func (s *Service) Create(ctx context.Context, userID uuid.UUID, m *Monitor) (*Monitor, error) {
 	fields := map[string]string{}
 	if m.Name == "" {
@@ -131,9 +137,9 @@ func (s *Service) Delete(ctx context.Context, userID, id uuid.UUID) error {
 	return nil
 }
 
-func (s *Service) ListChecks(ctx context.Context, userID, monitorID uuid.UUID, limit int) ([]Check, error) {
+func (s *Service) ListChecks(ctx context.Context, userID, monitorID uuid.UUID, p CheckListParams) ([]Check, int, error) {
 	if _, err := s.repo.GetByID(ctx, userID, monitorID); err != nil {
-		return nil, fmt.Errorf("monitor not found: %w", err)
+		return nil, 0, err
 	}
-	return s.repo.ListChecksByMonitor(ctx, monitorID, limit)
+	return s.repo.ListChecksByMonitor(ctx, monitorID, p)
 }
