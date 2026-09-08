@@ -24,8 +24,8 @@ PostgreSQL is shared by all components.
     │   │   ├── router.go
     │   │   ├── service.go
     │   │   ├── repository.go
-    │   │   ├── monitor.go
-    │   │   └── monitor_check_repository.go
+    │   │   ├── monitor_check_repository.go
+    │   │   └── monitor.go
     │   │
     │   ├── incident/
     │   │   ├── handler.go
@@ -44,6 +44,15 @@ PostgreSQL is shared by all components.
     │   ├── auth/
     │   │   ├── jwt.go
     │   │   └── middleware.go
+    │   │
+    │   ├── httpx/
+    │   │   └── httpx.go      (shared HTTP helpers: errors, pagination, JSON)
+    │   │
+    │   ├── health/
+    │   │   └── health.go     (healthz / readyz endpoints)
+    │   │
+    │   ├── docs/
+    │   │   └── docs.go       (OpenAPI spec + /docs endpoints)
     │   │
     │   ├── scheduler/
     │   │   ├── scheduler.go
@@ -76,7 +85,23 @@ Application entry point. Signals a context, starts scheduler + worker goroutines
 
 ### `cmd/api.go`
 
-Composition/wiring (not a handler): builds repositories, services, the scheduler and workers, and the chi router. It also wires the monitor service to the scheduler via event callbacks (`add` / `update` / `remove`) and gives the workers the same `sched.Notify` so they can report ghost monitors.
+Composition/wiring (not a handler): builds repositories, services, the scheduler and workers, and the chi router. It also wires the monitor service to the scheduler via event callbacks (`add` / `update` / `remove`) and gives the workers the same `sched.Notify` so they can report ghost monitors. It passes the incident repository into the monitor service so the service can derive monitor `status` from active incidents.
+
+### `internal/httpx/`
+
+Shared HTTP helpers so handlers stay thin and consistent:
+
+- `WriteError` / `WriteValidationError` — error contract (`{"error":{code,message,details}}`).
+- `WriteJSON` / `WriteList` — JSON responses and the pagination envelope `{data, pagination}`.
+- `ParsePageParams` — `?page=` / `?limit=` with defaults and max bound.
+
+### `internal/health/health.go`
+
+`healthz` (liveness, always 200) and `readyz` (readiness, `pool.Ping` with 2s timeout, 503 on failure).
+
+### `internal/docs/docs.go`
+
+Serves the OpenAPI specification and mounts the `/docs` router with the API documentation endpoints.
 
 ### `internal/monitor/`
 
@@ -84,9 +109,9 @@ Everything related to monitors.
 
 - `handler.go` — HTTP handlers for monitor endpoints.
 - `router.go` — chi router.
-- `service.go` — Monitor business logic + scheduler event callbacks.
-- `repository.go` — PostgreSQL queries for monitors.
-- `monitor.go` — Monitor data structures.
+- `service.go` — Monitor business logic + scheduler event callbacks. Its `List` / `Get` enrich monitors with derived status and 24h metrics via a `MonitorWithStatus` DTO.
+- `repository.go` — PostgreSQL queries for monitors, including the aggregated status query.
+- `monitor.go` — data structures: `Monitor`, `Check`, `NextRunPatch`, `MonitorWithStatus`.
 - `monitor_check_repository.go` — check result queries.
 
 ### `internal/incident/`
@@ -95,8 +120,8 @@ Everything related to incidents.
 
 - `handler.go` — HTTP handlers.
 - `router.go` — chi router.
-- `service.go` — Incident creation, updating and resolution.
-- `repository.go` — PostgreSQL queries for incidents.
+- `service.go` — Incident listing and retrieval.
+- `repository.go` — PostgreSQL queries for incidents, including `ActiveByMonitorIDs` used by the monitor service.
 - `incident.go` — Incident data structures.
 
 ### `internal/user/`
@@ -159,6 +184,9 @@ Example:
     002_create_monitors.sql
     003_create_monitor_checks.sql
     004_create_incidents.sql
+    005_add_password_to_users.sql
+    006_add_next_run_to_monitors.sql
+    007_add_failure_threshold_to_monitors.sql
 
 ## Request Architecture
 
@@ -310,6 +338,33 @@ When the application receives a shutdown signal:
        Close resources
 
 The scheduler and workers must stop cleanly instead of running indefinitely.
+
+## Derived Monitor Status
+
+`GET /monitors` and `GET /monitors/{id}` return each monitor enriched with a
+derived status instead of a plain `Monitor`. The response DTO embeds `Monitor`
+and adds display fields:
+
+- `status` — `operational` | `down` | `unknown`
+- `last_check_at`, `last_status_code`, `last_success`
+- `uptime_24h`, `avg_response_ms`
+
+The status is derived at read time and is **not stored**:
+
+1. `Repository.ListStatusByIDs` runs a single query per page:
+   two `LEFT JOIN LATERAL` subqueries (latest check per monitor + 24h
+   aggregates) — no N+1.
+2. `incident.Repository.ActiveByMonitorIDs` returns which of those monitors
+   have an open incident (`resolved_at IS NULL`).
+3. `service.computeStatus` combines both:
+   - active incident → `down`
+   - no checks yet → `unknown`
+   - otherwise → `operational`
+
+The monitor service depends on the incident repository through a minimal
+consumer-side interface (`incidentLookup`) rather than importing the incident
+package directly — keeping the dependency direction one-way and making the
+service testable with a fake.
 
 ## Initial Deployment Model
 

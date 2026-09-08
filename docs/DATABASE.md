@@ -11,6 +11,7 @@ The initial database is intentionally small and focused on the core monitoring f
     ├──────────────┤
     │ id PK        │
     │ email        │
+    │ password     │
     │ created_at   │
     │ updated_at   │
     └──────┬───────┘
@@ -29,6 +30,8 @@ The initial database is intentionally small and focused on the core monitoring f
     │ timeout_seconds  │
     │ expected_status  │
     │ active           │
+    │ next_run         │
+    │ failure_threshold│
     │ created_at       │
     │ updated_at       │
     └────────┬─────────┘
@@ -58,10 +61,9 @@ Represents a Pulse user.
 |---|---|
 | `id` | Unique user identifier |
 | `email` | User email address |
+| `password` | Bcrypt password hash (added in migration 005) |
 | `created_at` | Account creation time |
 | `updated_at` | Last update time |
-
-Authentication data is intentionally kept out of this schema for now.
 
 ### monitors
 
@@ -78,6 +80,8 @@ Represents an endpoint that Pulse periodically monitors.
 | `timeout_seconds` | Request timeout |
 | `expected_status` | Expected HTTP status code |
 | `active` | Whether the monitor is enabled |
+| `next_run` | Next scheduled check time, persisted by the scheduler flusher (migration 006) |
+| `failure_threshold` | Consecutive failures before an incident opens (migration 007) |
 | `created_at` | Creation time |
 | `updated_at` | Last update time |
 
@@ -90,6 +94,7 @@ Example monitor:
     timeout_seconds: 10
     expected_status: 200
     active: true
+    failure_threshold: 3
 
 ### monitor_checks
 
@@ -160,7 +165,10 @@ The relationship can be summarized as:
 
 ### Store checks instead of metrics
 
-Metrics such as uptime percentage and average response time will be calculated from `monitor_checks`.
+Metrics such as uptime percentage and average response time are **calculated on
+read** from `monitor_checks` (a `LEFT JOIN LATERAL` query per monitor page), not
+stored on `monitors`. `GET /monitors` and `GET /monitors/{id}` return them via
+the derived-status DTO.
 
 We should avoid storing derived values such as `uptime_percentage` directly on `monitors`.
 

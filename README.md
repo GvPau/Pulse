@@ -898,4 +898,9 @@ Store result
 GET /monitors/:id/checks
 ```
 
+The current API (`GET /monitors` and `GET /monitors/{id}`) already enriches
+each monitor with a derived `status` (`operational` / `down` / `unknown`) plus
+uptime %, average response time, and last check details, computed from stored
+checks at read time.
+
 Once this works reliably, we build the UI.
