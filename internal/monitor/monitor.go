@@ -34,3 +34,13 @@ type NextRunPatch struct {
 	ID      uuid.UUID
 	NextRun time.Time
 }
+
+type MonitorWithStatus struct {
+	Monitor
+	Status         string     `json:"status"` // operational | down | unknown
+	LastCheckAt    *time.Time `json:"last_check_at,omitempty"`
+	LastStatusCode *int       `json:"last_status_code,omitempty"`
+	LastSuccess    *bool      `json:"last_success,omitempty"`
+	Uptime24h      *float64   `json:"uptime_24h,omitempty"`
+	AvgResponseMs  *float64   `json:"avg_response_ms,omitempty"`
+}

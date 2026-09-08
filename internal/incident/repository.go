@@ -127,3 +127,31 @@ func (r *Repository) Resolve(ctx context.Context, id uuid.UUID, resolvedAt time.
 
 	return nil
 }
+
+// ActiveByMonitorIDs returns the monitor that have an active incident
+func (r *Repository) ActiveByMonitorIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]bool, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT DISTINCT monitor_id FROM incidents
+	WHERE monitor_id = ANY($1::uuid[]) AND resolved_at IS NULL`, ids)
+
+	if err != nil {
+		return nil, fmt.Errorf("active indicents %w", err)
+	}
+	defer rows.Close()
+
+	active := make(map[uuid.UUID]bool)
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan active incident %w", err)
+		}
+
+		active[id] = true
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("active incidents rows: %w", err)
+	}
+
+	return active, nil
+}

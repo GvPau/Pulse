@@ -55,7 +55,7 @@ func newAPI(ctx context.Context) (*api, error) {
 	wrk := scheduler.NewWorker(monitorRepo, incidentRepo, jobs,
 		func(ctx context.Context, ev scheduler.Event) { sched.Notify(ctx, ev) })
 
-	monitorService := monitor.NewService(monitorRepo,
+	monitorService := monitor.NewService(monitorRepo, incidentRepo,
 		func(ctx context.Context, id uuid.UUID) {
 			// Notify the scheduler about the new monitor
 			sched.Notify(ctx, scheduler.Event{Type: "add", MonitorId: id})

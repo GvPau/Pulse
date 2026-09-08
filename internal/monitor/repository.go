@@ -278,3 +278,46 @@ func (r *Repository) UpdateNextRuns(ctx context.Context, patches []NextRunPatch)
 
 	return nil
 }
+
+func (r *Repository) ListStatusByIDs(ctx context.Context, ids []uuid.UUID) ([]MonitorWithStatus, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT m.id, last.checked_at, last.status_code, last.success, up.uptime_24h, up.avg_response_ms
+	FROM monitors m
+	LEFT JOIN LATERAL (
+		SELECT checked_at, status_code, success
+		FROM monitor_checks
+		WHERE monitor_id = m.id
+		ORDER BY checked_at DESC
+		LIMIT 1
+	) last ON true
+	 LEFT JOIN LATERAL (
+	 SELECT AVG(CASE WHEN success THEN 100.0 ELSE 0 END) AS uptime_24h,
+	 	AVG(response_time_ms) AS avg_response_ms
+		FROM monitor_checks
+		WHERE monitor_id = m.id AND checked_at >= now() - interval '24 hours' 
+	) up ON true
+	WHERE m.id = ANY($1::uuid[])`, ids)
+
+	if err != nil {
+		return nil, fmt.Errorf("list status %w", err)
+	}
+	defer rows.Close()
+
+	var statuses []MonitorWithStatus
+	for rows.Next() {
+		var s MonitorWithStatus
+		if err := rows.Scan(
+			&s.ID, &s.LastCheckAt, &s.LastStatusCode, &s.LastSuccess,
+			&s.Uptime24h, &s.AvgResponseMs,
+		); err != nil {
+			return nil, fmt.Errorf("scan status: %w", err)
+		}
+		statuses = append(statuses, s)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list status rows %w", err)
+	}
+
+	return statuses, nil
+}

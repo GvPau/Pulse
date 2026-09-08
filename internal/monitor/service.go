@@ -5,29 +5,26 @@ import (
 	"errors"
 	"fmt"
 	"pulse/internal/httpx"
+	"time"
 	"uuid"
 )
 
 type Service struct {
-	repo     *Repository
-	onCreate func(ctx context.Context, id uuid.UUID)
-	onUpdate func(ctx context.Context, id uuid.UUID)
-	onDelete func(ctx context.Context, id uuid.UUID)
+	repo      *Repository
+	incidents incidentLookup
+	onCreate  func(ctx context.Context, id uuid.UUID)
+	onUpdate  func(ctx context.Context, id uuid.UUID)
+	onDelete  func(ctx context.Context, id uuid.UUID)
 }
 
-func NewService(repo *Repository, onCreate, onUpdate, onDelete func(ctx context.Context, id uuid.UUID)) *Service {
+func NewService(repo *Repository, incidents incidentLookup, onCreate, onUpdate, onDelete func(ctx context.Context, id uuid.UUID)) *Service {
 	return &Service{
-		repo:     repo,
-		onCreate: onCreate,
-		onUpdate: onUpdate,
-		onDelete: onDelete,
+		repo:      repo,
+		incidents: incidents,
+		onCreate:  onCreate,
+		onUpdate:  onUpdate,
+		onDelete:  onDelete,
 	}
-}
-
-var monitorSortColumns = map[string]string{
-	"name":             "name",
-	"created_at":       "created_at",
-	"interval_seconds": "interval_seconds",
 }
 
 type ListParams struct {
@@ -43,6 +40,16 @@ type CheckListParams struct {
 	Page    int
 	Limit   int
 	Success *bool
+}
+
+type incidentLookup interface {
+	ActiveByMonitorIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]bool, error)
+}
+
+var monitorSortColumns = map[string]string{
+	"name":             "name",
+	"created_at":       "created_at",
+	"interval_seconds": "interval_seconds",
 }
 
 func (s *Service) Create(ctx context.Context, userID uuid.UUID, m *Monitor) (*Monitor, error) {
@@ -81,14 +88,65 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, m *Monitor) (*Mo
 	return m, nil
 }
 
-func (s *Service) List(ctx context.Context, userID uuid.UUID, p ListParams) ([]Monitor, int, error) {
+func (s *Service) List(ctx context.Context, userID uuid.UUID, p ListParams) ([]MonitorWithStatus, int, error) {
 	monitors, total, err := s.repo.ListByUser(ctx, userID, p)
 
 	if err != nil {
 		return nil, 0, err
 	}
 
-	return monitors, total, nil
+	if len(monitors) == 0 {
+		return []MonitorWithStatus{}, total, nil
+	}
+
+	ids := make([]uuid.UUID, 0, len(monitors))
+	for _, m := range monitors {
+		ids = append(ids, m.ID)
+	}
+
+	statuses, err := s.repo.ListStatusByIDs(ctx, ids)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	active, err := s.incidents.ActiveByMonitorIDs(ctx, ids)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	byID := make(map[uuid.UUID]MonitorWithStatus, len(statuses))
+	for _, st := range statuses {
+		byID[st.ID] = st
+	}
+
+	result := make([]MonitorWithStatus, 0, len(monitors))
+	for _, m := range monitors {
+		mws := MonitorWithStatus{Monitor: m}
+		if st, ok := byID[m.ID]; ok {
+			mws.LastCheckAt = st.LastCheckAt
+			mws.LastStatusCode = st.LastStatusCode
+			mws.LastSuccess = st.LastSuccess
+			mws.Uptime24h = st.Uptime24h
+			mws.AvgResponseMs = st.AvgResponseMs
+		}
+		mws.Status = computeStatus(active[m.ID], mws.LastCheckAt)
+		result = append(result, mws)
+	}
+
+	return result, total, nil
+
+}
+
+func computeStatus(hasActiveIncident bool, lastCheckedAt *time.Time) string {
+	if hasActiveIncident {
+		return "down"
+	}
+
+	if lastCheckedAt == nil {
+		return "unknown"
+	}
+
+	return "operational"
 }
 
 func (s *Service) Get(ctx context.Context, userID, id uuid.UUID) (*Monitor, error) {
