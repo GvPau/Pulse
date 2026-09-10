@@ -30,7 +30,7 @@ func main() {
 		go app.worker.Run(ctx)
 	}
 
-	go app.scheduler.Run(ctx)
+	//go app.scheduler.Run(ctx)
 
 	srv := &http.Server{
 		Addr:    ":8080",

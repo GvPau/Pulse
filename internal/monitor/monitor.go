@@ -41,6 +41,28 @@ type MonitorWithStatus struct {
 	LastCheckAt    *time.Time `json:"last_check_at,omitempty"`
 	LastStatusCode *int       `json:"last_status_code,omitempty"`
 	LastSuccess    *bool      `json:"last_success,omitempty"`
-	Uptime24h      *float64   `json:"uptime_24h,omitempty"`
+	Uptime         *float64   `json:"uptime,omitempty"`
 	AvgResponseMs  *float64   `json:"avg_response_ms,omitempty"`
+	Checks         int        `json:"checks"`
+}
+
+type Window struct {
+	Key      string        // Api key e.g. "24h"
+	Duration time.Duration // How far the window looks
+	Step     string        //PostgreSQL step interval for series buckets, e.g "1 hour"
+	Trunc    string        // date_trunc unit used to align b uckets e.g "hour"
+}
+
+var windows = map[string]Window{
+	"24h": {Key: "24h", Duration: 24 * time.Hour, Step: "1 hour", Trunc: "hour"},
+	"7d":  {Key: "7d", Duration: 7 * 24 * time.Hour, Step: "1 hour", Trunc: "hour"},
+	"30d": {Key: "30d", Duration: 30 * 24 * time.Hour, Step: "1 day", Trunc: "day"},
+	"90d": {Key: "90d", Duration: 90 * 24 * time.Hour, Step: "1 day", Trunc: "day"},
+}
+
+const DefaultWindow = "24h"
+
+func windowByKey(key string) (Window, bool) {
+	w, ok := windows[key]
+	return w, ok
 }

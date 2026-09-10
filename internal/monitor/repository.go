@@ -279,9 +279,11 @@ func (r *Repository) UpdateNextRuns(ctx context.Context, patches []NextRunPatch)
 	return nil
 }
 
-func (r *Repository) ListStatusByIDs(ctx context.Context, ids []uuid.UUID) ([]MonitorWithStatus, error) {
+func (r *Repository) ListStatusByIDs(ctx context.Context, ids []uuid.UUID, win Window) ([]MonitorWithStatus, error) {
+	start := time.Now().Add(-win.Duration)
+
 	rows, err := r.pool.Query(ctx,
-		`SELECT m.id, last.checked_at, last.status_code, last.success, up.uptime_24h, up.avg_response_ms
+		`SELECT m.id, last.checked_at, last.status_code, last.success, COALESCE(up.uptime, 0), up.avg_response_ms, up.checks
 	FROM monitors m
 	LEFT JOIN LATERAL (
 		SELECT checked_at, status_code, success
@@ -291,12 +293,13 @@ func (r *Repository) ListStatusByIDs(ctx context.Context, ids []uuid.UUID) ([]Mo
 		LIMIT 1
 	) last ON true
 	 LEFT JOIN LATERAL (
-	 SELECT AVG(CASE WHEN success THEN 100.0 ELSE 0 END) AS uptime_24h,
-	 	AVG(response_time_ms) AS avg_response_ms
+	 SELECT AVG(CASE WHEN success THEN 100.0 ELSE 0 END) AS uptime,
+	 		AVG(response_time_ms) AS avg_response_ms,
+			COUNT(*) AS checks
 		FROM monitor_checks
-		WHERE monitor_id = m.id AND checked_at >= now() - interval '24 hours' 
+		WHERE monitor_id = m.id AND checked_at >= $2 
 	) up ON true
-	WHERE m.id = ANY($1::uuid[])`, ids)
+	WHERE m.id = ANY($1::uuid[])`, ids, start)
 
 	if err != nil {
 		return nil, fmt.Errorf("list status %w", err)
@@ -308,7 +311,7 @@ func (r *Repository) ListStatusByIDs(ctx context.Context, ids []uuid.UUID) ([]Mo
 		var s MonitorWithStatus
 		if err := rows.Scan(
 			&s.ID, &s.LastCheckAt, &s.LastStatusCode, &s.LastSuccess,
-			&s.Uptime24h, &s.AvgResponseMs,
+			&s.Uptime, &s.AvgResponseMs, &s.Checks,
 		); err != nil {
 			return nil, fmt.Errorf("scan status: %w", err)
 		}

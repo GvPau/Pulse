@@ -34,6 +34,7 @@ type ListParams struct {
 	Q      string
 	Sort   string
 	Order  string
+	Window string
 }
 
 type CheckListParams struct {
@@ -104,7 +105,12 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, p ListParams) ([]M
 		ids = append(ids, m.ID)
 	}
 
-	statuses, err := s.repo.ListStatusByIDs(ctx, ids)
+	win := windows[DefaultWindow]
+	if w, ok := windows[p.Window]; ok {
+		win = w
+	}
+
+	statuses, err := s.repo.ListStatusByIDs(ctx, ids, win)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -126,8 +132,9 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, p ListParams) ([]M
 			mws.LastCheckAt = st.LastCheckAt
 			mws.LastStatusCode = st.LastStatusCode
 			mws.LastSuccess = st.LastSuccess
-			mws.Uptime24h = st.Uptime24h
+			mws.Uptime = st.Uptime
 			mws.AvgResponseMs = st.AvgResponseMs
+			mws.Checks = st.Checks
 		}
 		mws.Status = computeStatus(active[m.ID], mws.LastCheckAt)
 		result = append(result, mws)

@@ -80,11 +80,20 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	params := ListParams{
-		Page:  pp.Page,
-		Limit: pp.Limit,
-		Q:     r.URL.Query().Get("q"),
-		Sort:  r.URL.Query().Get("sort"),
-		Order: r.URL.Query().Get("order"),
+		Page:   pp.Page,
+		Limit:  pp.Limit,
+		Q:      r.URL.Query().Get("q"),
+		Sort:   r.URL.Query().Get("sort"),
+		Order:  r.URL.Query().Get("order"),
+		Window: DefaultWindow,
+	}
+
+	if raw := r.URL.Query().Get("window"); raw != "" {
+		if _, ok := windowByKey(raw); !ok {
+			httpx.WriteError(w, http.StatusBadRequest, httpx.CodeInvalidRequest, "window must be one of: 24h, 7d, 30d, 90d")
+			return
+		}
+		params.Window = raw
 	}
 
 	if raw := r.URL.Query().Get("active"); raw != "" {
