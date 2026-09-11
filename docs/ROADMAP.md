@@ -45,7 +45,7 @@ horizontally (one Docker pod now; external queue once warranted).
 - Hooks in the incident lifecycle: opened -> DOWN alert, resolved -> RECOVERED.
 - Delivery log and retries.
 
-### Phase 3 — Availability metrics (✅ windows + series; ⏳ dashboard 11 Sep 2026)
+### Phase 3 — Availability metrics (✅ 11 Sep 2026)
 - ✅ Uptime %, checks and average/p95 response time over a configurable window
   (`?window=24h|7d|30d|90d`, default 24h), computed on read from
   `monitor_checks`, exposed via the derived-status DTO in `GET /monitors` and
@@ -53,7 +53,12 @@ horizontally (one Docker pod now; external queue once warranted).
 - ✅ `GET /monitors/{id}/metrics`: availability summary + time series with one
   point per bucket (hourly for `24h`/`7d`, daily for `30d`/`90d`), aligned via
   `generate_series`/`date_bin` and backfilled with zeros through a `LEFT JOIN`.
-- ⏳ Dashboard / status-page endpoints reusing the same derived values.
+- ✅ API docs synced (OpenAPI: `MonitorWithStatus`, `Metrics`/`MetricsSummary`/`MetricsPoint`, `?window=`).
+- ❌ Dashboard / public status-page endpoints: descartados por ahora (sin
+  consumidor; se retomarán con el cliente en Phase 6, con flag `public` de opt-in).
+- ▶ **Next: real-time events stream (SSE)** — push de eventos a un endpoint
+  `GET /stream` para el dashboard: nuevo check, cambio de estado del monitor,
+  actualización de métricas. Unidireccional HTTP (Pulse → cliente).
 
 ### Phase 4 — Check types + retention
 - SSL/TLS certificate expiry, keyword match, latency threshold.
