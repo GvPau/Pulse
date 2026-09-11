@@ -219,5 +219,35 @@ func (h *Handler) ListChecks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpx.WriteList(w, pp, total, checks)
+}
 
+func (h *Handler) GetMetrics(w http.ResponseWriter, r *http.Request) {
+	userId := auth.UserIDFromContext(r.Context())
+
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, httpx.CodeInvalidRequest, "invalid monitor id")
+		return
+	}
+
+	window := DefaultWindow
+	if raw := r.URL.Query().Get("window"); raw != "" {
+		if _, ok := windowByKey(raw); !ok {
+			httpx.WriteError(w, http.StatusBadRequest, httpx.CodeInvalidRequest, "window must be one of: 24h, 7d, 30d, 90d")
+			return
+		}
+		window = raw
+	}
+
+	metrics, err := h.service.Metrics(r.Context(), userId, id, window)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, httpx.CodeNotFound, "monitor not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, httpx.CodeInternal, "failed to load metrics")
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, metrics)
 }

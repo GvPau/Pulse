@@ -208,3 +208,33 @@ func (s *Service) ListChecks(ctx context.Context, userID, monitorID uuid.UUID, p
 	}
 	return s.repo.ListChecksByMonitor(ctx, monitorID, p)
 }
+
+func (s *Service) Metrics(ctx context.Context, userID, monitorID uuid.UUID, windowKey string) (*Metrics, error) {
+	win, ok := windowByKey(windowKey)
+	if !ok {
+		return nil, errors.New("invalid window")
+	}
+
+	if _, err := s.repo.GetByID(ctx, userID, monitorID); err != nil {
+		return nil, err
+	}
+
+	summary, err := s.repo.MetricsSummaryByMonitor(ctx, monitorID, win)
+	if err != nil {
+		return nil, err
+	}
+
+	series, err := s.repo.MetricsSeriesByMonitor(ctx, monitorID, win)
+	if err != nil {
+		return nil, err
+	}
+
+	summary.Failures = summary.Checks - summary.Successes
+
+	return &Metrics{
+		MonitorID: monitorID,
+		Window:    win.Key,
+		Summary:   *summary,
+		Series:    series,
+	}, nil
+}

@@ -66,3 +66,26 @@ func windowByKey(key string) (Window, bool) {
 	w, ok := windows[key]
 	return w, ok
 }
+
+type Metrics struct {
+	MonitorID uuid.UUID      `json:"monitor_id"`
+	Window    string         `json:"window"`
+	Summary   MetricsSummary `json:"summary"`
+	Series    []MetricsPoint `json:"series"`
+}
+
+type MetricsSummary struct {
+	Checks        int      `json:"checks"`
+	Successes     int      `json:"successes"`
+	Failures      int      `json:"failures"`
+	Uptime        float64  `json:"uptime"`          // % sobre la ventana
+	AvgResponseMs *float64 `json:"avg_response_ms"` // null si no hay data
+	P95ResponseMs *float64 `json:"p95_response_ms"` // null si no hay data
+}
+
+type MetricsPoint struct {
+	Bucket        time.Time `json:"bucket"`
+	Checks        int       `json:"checks"`
+	Uptime        float64   `json:"uptime"`
+	AvgResponseMs *float64  `json:"avg_response_ms"`
+}

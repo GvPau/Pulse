@@ -18,5 +18,6 @@ func Router(service *Service) func(r chi.Router) {
 		r.Put("/{id}", handler.Update)
 		r.Delete("/{id}", handler.Delete)
 		r.Get("/{id}/checks", handler.ListChecks)
+		r.Get("/{id}/metrics", handler.GetMetrics)
 	}
 }
