@@ -20,9 +20,11 @@ horizontally (one Docker pod now; external queue once warranted).
 - **Graceful shutdown** wired (scheduler waits for in-flight work, closes jobs).
 - **Derived monitor status**: `GET /monitors` and `GET /monitors/{id}` return
   each monitor with `status` (`operational` / `down` / `unknown`) plus
-  `last_check_at`, `last_status_code`, `last_success`, `uptime_24h`,
-  `avg_response_ms`. Computed on read (single `LEFT JOIN LATERAL` query per
-  page, no N+1); `down` = open incident (`resolved_at IS NULL`).
+  `last_check_at`, `last_status_code`, `last_success`, `uptime`, `checks`,
+  `avg_response_ms`. Availability is computed on read over a configurable
+  window (`?window=24h|7d|30d|90d`, default 24h) with a single
+  `LEFT JOIN LATERAL` query per page, no N+1); `down` = open incident
+  (`resolved_at IS NULL`).
 - **Pricing doc** (`docs/PRICING.md`) is direction, NOT final. The minimum
   interval validation (reject < 60s) is deferred until pricing is decided.
 
@@ -43,11 +45,14 @@ horizontally (one Docker pod now; external queue once warranted).
 - Hooks in the incident lifecycle: opened -> DOWN alert, resolved -> RECOVERED.
 - Delivery log and retries.
 
-### Phase 3 — Availability metrics (partial ✅ 08 Sep 2026)
-- ✅ Uptime % and average response time over 24h, computed on read from
-  `monitor_checks`, exposed in `GET /monitors` and `GET /monitors/{id}` via the
-  derived-status DTO.
-- ⏳ Configurable time windows (7d/30d/90d), richer metric trends.
+### Phase 3 — Availability metrics (✅ windows + series; ⏳ dashboard 11 Sep 2026)
+- ✅ Uptime %, checks and average/p95 response time over a configurable window
+  (`?window=24h|7d|30d|90d`, default 24h), computed on read from
+  `monitor_checks`, exposed via the derived-status DTO in `GET /monitors` and
+  `GET /monitors/{id}`.
+- ✅ `GET /monitors/{id}/metrics`: availability summary + time series with one
+  point per bucket (hourly for `24h`/`7d`, daily for `30d`/`90d`), aligned via
+  `generate_series`/`date_bin` and backfilled with zeros through a `LEFT JOIN`.
 - ⏳ Dashboard / status-page endpoints reusing the same derived values.
 
 ### Phase 4 — Check types + retention

@@ -150,6 +150,10 @@ paths:
         Lists the caller's monitors with optional filtering, sorting and
         pagination.
       operationId: listMonitors
+      description: |
+        Lists the caller's monitors with optional filtering, sorting and
+        pagination. Each item carries derived availability status over the
+        requested `window` (uptime %, checks and average response time).
       parameters:
         - $ref: "#/components/parameters/PageQuery"
         - $ref: "#/components/parameters/LimitQuery"
@@ -157,6 +161,7 @@ paths:
         - $ref: "#/components/parameters/ActiveQuery"
         - $ref: "#/components/parameters/SortQuery"
         - $ref: "#/components/parameters/OrderQuery"
+        - $ref: "#/components/parameters/WindowQuery"
       responses:
         "200":
           description: Paginated monitor list
@@ -165,7 +170,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/MonitorListResponse"
         "400":
-          description: Invalid query parameters (active, sort, order, page, limit)
+          description: Invalid query parameters (active, sort, order, page, limit, window)
           content:
             application/json:
               schema:
@@ -213,13 +218,16 @@ paths:
       tags: [Monitors]
       summary: Get a monitor
       operationId: getMonitor
+      description: |
+        Returns the monitor with its derived availability status over the
+        current window (default 24h).
       responses:
         "200":
-          description: The monitor
+          description: The monitor with derived status
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Monitor"
+                $ref: "#/components/schemas/MonitorWithStatus"
         "400":
           description: id is not a valid UUID
           content:
@@ -278,6 +286,40 @@ paths:
                 $ref: "#/components/schemas/MessageOk"
         "400":
           description: id is not a valid UUID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Monitor does not exist or belongs to another user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /monitors/{id}/metrics:
+    parameters:
+      - $ref: "#/components/parameters/MonitorIdPath"
+    get:
+      tags: [Monitors]
+      summary: Get availability metrics for a monitor
+      description: |
+        Returns the monitor's availability summary over the window plus a time
+        series with one point per bucket. Buckets are aligned to whole hours
+        (`24h`, `7d`) or whole days (`30d`, `90d`); empty buckets are filled
+        with zero checks via a `LEFT JOIN`.
+      operationId: getMonitorMetrics
+      parameters:
+        - $ref: "#/components/parameters/WindowQuery"
+      responses:
+        "200":
+          description: Metrics summary + series over the window
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Metrics"
+        "400":
+          description: Invalid id or window value
           content:
             application/json:
               schema:
@@ -466,6 +508,17 @@ components:
       schema:
         type: string
         format: uuid
+    WindowQuery:
+      name: window
+      in: query
+      description: |
+        Availability time window used for `uptime`, `checks` and
+        `avg_response_ms`. Bucketing: hourly for `24h`/`7d`, daily for
+        `30d`/`90d`.
+      schema:
+        type: string
+        enum: [24h, 7d, 30d, 90d]
+        default: 24h
 
   schemas:
     ErrorResponse:
@@ -615,6 +668,40 @@ components:
           type: string
           format: date-time
 
+    MonitorWithStatus:
+      type: object
+      description: A monitor plus its derived availability status over the window.
+      allOf:
+        - $ref: "#/components/schemas/Monitor"
+        - type: object
+          required: [status, checks]
+          properties:
+            status:
+              type: string
+              enum: [operational, down, unknown]
+            last_check_at:
+              type: string
+              format: date-time
+              nullable: true
+            last_status_code:
+              type: integer
+              nullable: true
+            last_success:
+              type: boolean
+              nullable: true
+            uptime:
+              type: number
+              format: float
+              nullable: true
+              description: Availability percentage over the requested window.
+            avg_response_ms:
+              type: number
+              format: float
+              nullable: true
+            checks:
+              type: integer
+              description: Checks recorded over the requested window.
+
     MonitorListResponse:
       type: object
       required: [data, pagination]
@@ -622,7 +709,7 @@ components:
         data:
           type: array
           items:
-            $ref: "#/components/schemas/Monitor"
+            $ref: "#/components/schemas/MonitorWithStatus"
         pagination:
           $ref: "#/components/schemas/Pagination"
 
@@ -661,6 +748,66 @@ components:
             $ref: "#/components/schemas/Check"
         pagination:
           $ref: "#/components/schemas/Pagination"
+
+    Metrics:
+      type: object
+      required: [monitor_id, window, summary, series]
+      properties:
+        monitor_id:
+          type: string
+          format: uuid
+        window:
+          type: string
+          enum: [24h, 7d, 30d, 90d]
+        summary:
+          $ref: "#/components/schemas/MetricsSummary"
+        series:
+          type: array
+          items:
+            $ref: "#/components/schemas/MetricsPoint"
+
+    MetricsSummary:
+      type: object
+      required: [checks, successes, failures, uptime]
+      properties:
+        checks:
+          type: integer
+        successes:
+          type: integer
+        failures:
+          type: integer
+        uptime:
+          type: number
+          format: float
+          description: Availability percentage over the verified window.
+        avg_response_ms:
+          type: number
+          format: float
+          nullable: true
+          description: Mean response time over the window; null when there is no data.
+        p95_response_ms:
+          type: number
+          format: float
+          nullable: true
+          description: 95th percentile response time; 95% of checks finished faster than this.
+
+    MetricsPoint:
+      type: object
+      required: [bucket, checks, uptime]
+      properties:
+        bucket:
+          type: string
+          format: date-time
+          description: Bucket start, aligned to a whole hour or day.
+        checks:
+          type: integer
+        uptime:
+          type: number
+          format: float
+        avg_response_ms:
+          type: number
+          format: float
+          nullable: true
 
     Incident:
       type: object
