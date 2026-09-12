@@ -66,10 +66,14 @@ horizontally (one Docker pod now; external queue once warranted).
   non-blocking delivery (slow clients get dropped, not the whole bus).
 - ❌ Dashboard / public status-page endpoints: descartados por ahora (sin
   consumidor; se retomarán con el cliente en Phase 6, con flag `public` de opt-in).
-- ▶ **Next: frontend dashboard** — when the client app is started, subscribe to
-  `/stream` to render checks, status changes and metrics in real time. (Note:
-  browser `EventSource` cannot send the `Authorization` header — token must go
-  via query param or cookie).
+- ▶ **Remaining (frontend prep)**:
+  - **Frontend auth for `/stream`** — the browser `EventSource` API cannot send
+    an `Authorization` header, so reading the stream from the dashboard needs a
+    token via query param or cookie (currently the endpoint only accepts the
+    Bearer header, as used by Postman/curl).
+  - **Incident streaming events** — `incident.opened`/`resolved` are emitted by
+    the worker, but they still need to be validated end-to-end (trigger a real
+    incident on a failing monitor and confirm the frames arrive).
 
 ### Phase 4 — Check types + retention
 - SSL/TLS certificate expiry, keyword match, latency threshold.
