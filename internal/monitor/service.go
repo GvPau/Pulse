@@ -2,9 +2,11 @@ package monitor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"pulse/internal/httpx"
+	"pulse/internal/stream"
 	"time"
 	"uuid"
 )
@@ -12,15 +14,17 @@ import (
 type Service struct {
 	repo      *Repository
 	incidents incidentLookup
+	hub       *stream.Hub
 	onCreate  func(ctx context.Context, id uuid.UUID)
 	onUpdate  func(ctx context.Context, id uuid.UUID)
 	onDelete  func(ctx context.Context, id uuid.UUID)
 }
 
-func NewService(repo *Repository, incidents incidentLookup, onCreate, onUpdate, onDelete func(ctx context.Context, id uuid.UUID)) *Service {
+func NewService(repo *Repository, incidents incidentLookup, hub *stream.Hub, onCreate, onUpdate, onDelete func(ctx context.Context, id uuid.UUID)) *Service {
 	return &Service{
 		repo:      repo,
 		incidents: incidents,
+		hub:       hub,
 		onCreate:  onCreate,
 		onUpdate:  onUpdate,
 		onDelete:  onDelete,
@@ -51,42 +55,6 @@ var monitorSortColumns = map[string]string{
 	"name":             "name",
 	"created_at":       "created_at",
 	"interval_seconds": "interval_seconds",
-}
-
-func (s *Service) Create(ctx context.Context, userID uuid.UUID, m *Monitor) (*Monitor, error) {
-	fields := map[string]string{}
-	if m.Name == "" {
-		fields["name"] = "is required"
-	}
-
-	if m.URL == "" {
-		fields["url"] = "is required"
-	}
-
-	if len(fields) > 0 {
-		return nil, &httpx.ValidationError{Message: "validation failed", Fields: fields}
-	}
-
-	// Default failure threshold to 3 if not set
-	if m.FailureThreshold == 0 {
-		m.FailureThreshold = 3
-	}
-	if m.FailureThreshold < 1 {
-		return nil, errors.New("failure_threshold must be at least 1")
-	}
-
-	m.ID = uuid.New()
-	m.UserID = userID
-
-	if err := s.repo.Create(ctx, m); err != nil {
-		return nil, fmt.Errorf("update monitor: %w", err)
-	}
-
-	if s.onCreate != nil {
-		s.onCreate(ctx, m.ID)
-	}
-
-	return m, nil
 }
 
 func (s *Service) List(ctx context.Context, userID uuid.UUID, p ListParams) ([]MonitorWithStatus, int, error) {
@@ -166,6 +134,43 @@ func (s *Service) Get(ctx context.Context, userID, id uuid.UUID) (*Monitor, erro
 	return m, nil
 }
 
+func (s *Service) Create(ctx context.Context, userID uuid.UUID, m *Monitor) (*Monitor, error) {
+	fields := map[string]string{}
+	if m.Name == "" {
+		fields["name"] = "is required"
+	}
+
+	if m.URL == "" {
+		fields["url"] = "is required"
+	}
+
+	if len(fields) > 0 {
+		return nil, &httpx.ValidationError{Message: "validation failed", Fields: fields}
+	}
+
+	// Default failure threshold to 3 if not set
+	if m.FailureThreshold == 0 {
+		m.FailureThreshold = 3
+	}
+	if m.FailureThreshold < 1 {
+		return nil, errors.New("failure_threshold must be at least 1")
+	}
+
+	m.ID = uuid.New()
+	m.UserID = userID
+
+	if err := s.repo.Create(ctx, m); err != nil {
+		return nil, fmt.Errorf("update monitor: %w", err)
+	}
+
+	if s.onCreate != nil {
+		s.onCreate(ctx, m.ID)                   // Adds on queue the new monitor
+		s.publish("monitor.created", userID, m) // Publishes creation of monitor to subscribers
+	}
+
+	return m, nil
+}
+
 func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, m *Monitor) error {
 	fields := map[string]string{}
 	if m.Name == "" {
@@ -183,7 +188,8 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, m *Monitor) 
 	}
 
 	if s.onUpdate != nil {
-		s.onUpdate(ctx, id)
+		s.onUpdate(ctx, id)                     // Updates monitors from queue
+		s.publish("monitor.updated", userID, m) // Publishes update of monitor to subscribers
 	}
 
 	return nil
@@ -196,7 +202,8 @@ func (s *Service) Delete(ctx context.Context, userID, id uuid.UUID) error {
 	}
 
 	if s.onDelete != nil {
-		s.onDelete(ctx, id)
+		s.onDelete(ctx, id)                                                  // Deletes monitor from queue
+		s.publish("monitor.deleted", userID, map[string]uuid.UUID{"id": id}) // Publishes delete of monitor to subscribers
 	}
 
 	return nil
@@ -237,4 +244,17 @@ func (s *Service) Metrics(ctx context.Context, userID, monitorID uuid.UUID, wind
 		Summary:   *summary,
 		Series:    series,
 	}, nil
+}
+
+func (s *Service) publish(eventType string, userID uuid.UUID, data any) {
+	if s.hub == nil {
+		return
+	}
+
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return
+	}
+
+	s.hub.Publish(stream.Event{Type: eventType, UserId: userID, Data: raw})
 }

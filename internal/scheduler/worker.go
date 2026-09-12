@@ -2,11 +2,13 @@ package scheduler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"pulse/internal/checker"
 	"pulse/internal/incident"
 	"pulse/internal/monitor"
+	"pulse/internal/stream"
 	"time"
 	"uuid"
 )
@@ -16,10 +18,11 @@ type Worker struct {
 	incidentRepo *incident.Repository
 	jobs         <-chan Job
 	notify       func(context.Context, Event)
+	hub          *stream.Hub
 }
 
-func NewWorker(monitorRepo *monitor.Repository, incidentRepo *incident.Repository, jobs <-chan Job, notify func(context.Context, Event)) *Worker {
-	return &Worker{monitorRepo: monitorRepo, incidentRepo: incidentRepo, jobs: jobs, notify: notify}
+func NewWorker(monitorRepo *monitor.Repository, incidentRepo *incident.Repository, jobs <-chan Job, hub *stream.Hub, notify func(context.Context, Event)) *Worker {
+	return &Worker{monitorRepo: monitorRepo, incidentRepo: incidentRepo, jobs: jobs, hub: hub, notify: notify}
 }
 
 func (w *Worker) Run(ctx context.Context) {
@@ -34,6 +37,7 @@ func (w *Worker) handleIncident(ctx context.Context, m *monitor.Monitor, success
 		active, err := w.incidentRepo.FindActiveByMonitor(ctx, m.ID)
 		if err == nil {
 			w.incidentRepo.Resolve(ctx, active.ID, time.Now())
+			w.publishStreamEvent("incident.resolved", m.UserID, active)
 			log.Printf("worker: incident %s resolved for monitor %s", active.ID, m.ID)
 		}
 		return
@@ -59,6 +63,7 @@ func (w *Worker) handleIncident(ctx context.Context, m *monitor.Monitor, success
 				CreatedAt:    time.Now(),
 			}
 			w.incidentRepo.Create(ctx, inc)
+			w.publishStreamEvent("incident.opened", m.UserID, inc)
 			log.Printf("worker: incident opened for monitor %s (failures=%d)", m.ID, count)
 		}
 
@@ -88,6 +93,7 @@ func (w *Worker) Process(ctx context.Context, j Job) {
 		ResponseTimeMS: result.ResponseTimeMs,
 		Success:        result.Success,
 		Error:          result.Error,
+		CheckedAt:      time.Now(),
 	}
 
 	// 4. Save
@@ -98,6 +104,17 @@ func (w *Worker) Process(ctx context.Context, j Job) {
 
 	// 5. Handle incident state
 	w.handleIncident(ctx, m, result.Success)
+	w.publishStreamEvent("check.completed", m.UserID, check)
 
 	log.Printf("worker: monitor %s checked, success=%v", m.ID, result.Success)
+}
+
+func (w *Worker) publishStreamEvent(eventType string, userID uuid.UUID, data any) {
+	raw, err := json.Marshal(data)
+	if err != nil {
+		log.Printf("worker: marshal %s event: %v", eventType, err)
+		return
+	}
+
+	w.hub.Publish(stream.Event{Type: eventType, UserId: userID, Data: raw})
 }

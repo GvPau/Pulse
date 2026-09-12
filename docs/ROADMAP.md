@@ -25,6 +25,10 @@ horizontally (one Docker pod now; external queue once warranted).
   window (`?window=24h|7d|30d|90d`, default 24h) with a single
   `LEFT JOIN LATERAL` query per page, no N+1); `down` = open incident
   (`resolved_at IS NULL`).
+- **Real-time events (SSE)**: `GET /stream` (Bearer auth) pushes events per
+  user through an in-memory pub/sub hub (`internal/stream`): `check.completed`,
+  `incident.opened`/`resolved`, `monitor.created`/`updated`/`deleted`. Heartbeat
+  every 15s; non-blocking delivery drops slow consumers.
 - **Pricing doc** (`docs/PRICING.md`) is direction, NOT final. The minimum
   interval validation (reject < 60s) is deferred until pricing is decided.
 
@@ -54,11 +58,18 @@ horizontally (one Docker pod now; external queue once warranted).
   point per bucket (hourly for `24h`/`7d`, daily for `30d`/`90d`), aligned via
   `generate_series`/`date_bin` and backfilled with zeros through a `LEFT JOIN`.
 - ✅ API docs synced (OpenAPI: `MonitorWithStatus`, `Metrics`/`MetricsSummary`/`MetricsPoint`, `?window=`).
+- ✅ **Real-time events stream (SSE)** — `GET /stream` (Bearer auth, per-user
+  filtering) pushes events via an in-memory pub/sub hub (`internal/stream`):
+  `check.completed` (from the worker after saving), `incident.opened`/
+  `resolved` (from the incident lifecycle), `monitor.created`/`updated`/
+  `deleted` (from the monitor service). Heartbeat `: ping` every 15s,
+  non-blocking delivery (slow clients get dropped, not the whole bus).
 - ❌ Dashboard / public status-page endpoints: descartados por ahora (sin
   consumidor; se retomarán con el cliente en Phase 6, con flag `public` de opt-in).
-- ▶ **Next: real-time events stream (SSE)** — push de eventos a un endpoint
-  `GET /stream` para el dashboard: nuevo check, cambio de estado del monitor,
-  actualización de métricas. Unidireccional HTTP (Pulse → cliente).
+- ▶ **Next: frontend dashboard** — when the client app is started, subscribe to
+  `/stream` to render checks, status changes and metrics in real time. (Note:
+  browser `EventSource` cannot send the `Authorization` header — token must go
+  via query param or cookie).
 
 ### Phase 4 — Check types + retention
 - SSL/TLS certificate expiry, keyword match, latency threshold.

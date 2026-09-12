@@ -12,6 +12,7 @@ import (
 	"pulse/internal/incident"
 	"pulse/internal/monitor"
 	"pulse/internal/scheduler"
+	"pulse/internal/stream"
 	"pulse/internal/user"
 	"uuid"
 
@@ -41,6 +42,8 @@ func newAPI(ctx context.Context) (*api, error) {
 	log.Printf("Database up")
 
 	// Dependecies
+	sseHub := stream.NewHub()
+
 	userRepo := user.NewRepository(pool)
 	monitorRepo := monitor.NewRepository(pool)
 	incidentRepo := incident.NewRepository(pool)
@@ -52,10 +55,10 @@ func newAPI(ctx context.Context) (*api, error) {
 	const numWorkers = 3
 	jobs := make(chan scheduler.Job, numWorkers)
 	sched := scheduler.NewScheduler(monitorRepo, jobs)
-	wrk := scheduler.NewWorker(monitorRepo, incidentRepo, jobs,
+	wrk := scheduler.NewWorker(monitorRepo, incidentRepo, jobs, sseHub,
 		func(ctx context.Context, ev scheduler.Event) { sched.Notify(ctx, ev) })
 
-	monitorService := monitor.NewService(monitorRepo, incidentRepo,
+	monitorService := monitor.NewService(monitorRepo, incidentRepo, sseHub,
 		func(ctx context.Context, id uuid.UUID) {
 			// Notify the scheduler about the new monitor
 			sched.Notify(ctx, scheduler.Event{Type: "add", MonitorId: id})
@@ -78,6 +81,9 @@ func newAPI(ctx context.Context) (*api, error) {
 	r.Route("/auth", user.Router(userService))
 	r.Route("/monitors", monitor.Router(monitorService))
 	r.Route("/incidents", incident.Router(incidentService))
+	r.Group(func(r chi.Router) {
+		stream.Router(sseHub)(r)
+	})
 
 	r.Mount("/docs", docs.Router())
 
