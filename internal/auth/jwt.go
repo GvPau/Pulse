@@ -62,3 +62,12 @@ func ParseToken(tokenString string) (*Claims, error) {
 
 	return claims, nil
 }
+
+func UserIDFromToken(tokenString string) (uuid.UUID, error) {
+	claims, err := ParseToken(tokenString)
+	if err != nil {
+		return uuid.UUID{}, err
+	}
+
+	return claims.UserID, nil
+}
