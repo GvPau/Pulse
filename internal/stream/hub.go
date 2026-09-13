@@ -40,8 +40,8 @@ func (h *Hub) Unsubscribe(userID uuid.UUID, ch <-chan []byte) {
 	for s := range h.subs {
 		if s.userID == userID && s.ch == ch {
 			delete(h.subs, s)
+			return
 		}
-		break
 	}
 	h.mu.Unlock()
 }
