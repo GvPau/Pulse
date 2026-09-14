@@ -164,8 +164,8 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, m *Monitor) (*Mo
 	}
 
 	if s.onCreate != nil {
-		s.onCreate(ctx, m.ID)                   // Adds on queue the new monitor
-		s.publish("monitor.created", userID, m) // Publishes creation of monitor to subscribers
+		s.onCreate(ctx, m.ID)                            // Adds on queue the new monitor
+		s.publish(stream.EventMonitorCreated, userID, m) // Publishes creation of monitor to subscribers
 	}
 
 	return m, nil
@@ -188,8 +188,8 @@ func (s *Service) Update(ctx context.Context, userID, id uuid.UUID, m *Monitor) 
 	}
 
 	if s.onUpdate != nil {
-		s.onUpdate(ctx, id)                     // Updates monitors from queue
-		s.publish("monitor.updated", userID, m) // Publishes update of monitor to subscribers
+		s.onUpdate(ctx, id)                              // Updates monitors from queue
+		s.publish(stream.EventMonitorUpdated, userID, m) // Publishes update of monitor to subscribers
 	}
 
 	return nil
@@ -202,8 +202,8 @@ func (s *Service) Delete(ctx context.Context, userID, id uuid.UUID) error {
 	}
 
 	if s.onDelete != nil {
-		s.onDelete(ctx, id)                                                  // Deletes monitor from queue
-		s.publish("monitor.deleted", userID, map[string]uuid.UUID{"id": id}) // Publishes delete of monitor to subscribers
+		s.onDelete(ctx, id)                                                           // Deletes monitor from queue
+		s.publish(stream.EventMonitorDeleted, userID, map[string]uuid.UUID{"id": id}) // Publishes delete of monitor to subscribers
 	}
 
 	return nil

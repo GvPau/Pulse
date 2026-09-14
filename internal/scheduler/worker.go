@@ -37,7 +37,7 @@ func (w *Worker) handleIncident(ctx context.Context, m *monitor.Monitor, success
 		active, err := w.incidentRepo.FindActiveByMonitor(ctx, m.ID)
 		if err == nil {
 			w.incidentRepo.Resolve(ctx, active.ID, time.Now())
-			w.publishStreamEvent("incident.resolved", m.UserID, active)
+			w.publishStreamEvent(stream.EventIncidentResolved, m.UserID, active)
 			log.Printf("worker: incident %s resolved for monitor %s", active.ID, m.ID)
 		}
 		return
@@ -63,7 +63,7 @@ func (w *Worker) handleIncident(ctx context.Context, m *monitor.Monitor, success
 				CreatedAt:    time.Now(),
 			}
 			w.incidentRepo.Create(ctx, inc)
-			w.publishStreamEvent("incident.opened", m.UserID, inc)
+			w.publishStreamEvent(stream.EventIncidentOpened, m.UserID, inc)
 			log.Printf("worker: incident opened for monitor %s (failures=%d)", m.ID, count)
 		}
 
@@ -104,7 +104,7 @@ func (w *Worker) Process(ctx context.Context, j Job) {
 
 	// 5. Handle incident state
 	w.handleIncident(ctx, m, result.Success)
-	w.publishStreamEvent("check.completed", m.UserID, check)
+	w.publishStreamEvent(stream.EventCheckCompleted, m.UserID, check)
 
 	log.Printf("worker: monitor %s checked, success=%v", m.ID, result.Success)
 }

@@ -61,15 +61,15 @@ func newAPI(ctx context.Context) (*api, error) {
 	monitorService := monitor.NewService(monitorRepo, incidentRepo, sseHub,
 		func(ctx context.Context, id uuid.UUID) {
 			// Notify the scheduler about the new monitor
-			sched.Notify(ctx, scheduler.Event{Type: "add", MonitorId: id})
+			sched.Notify(ctx, scheduler.Event{Type: scheduler.EventAdd, MonitorId: id})
 		},
 		func(ctx context.Context, id uuid.UUID) {
 			// Notify the scheduler about the updated monitor
-			sched.Notify(ctx, scheduler.Event{Type: "update", MonitorId: id})
+			sched.Notify(ctx, scheduler.Event{Type: scheduler.EventUpdate, MonitorId: id})
 		},
 		func(ctx context.Context, id uuid.UUID) {
 			// Notify the scheduler about the deleted monitor
-			sched.Notify(ctx, scheduler.Event{Type: "remove", MonitorId: id})
+			sched.Notify(ctx, scheduler.Event{Type: scheduler.EventUpdate, MonitorId: id})
 		})
 
 	// Router
