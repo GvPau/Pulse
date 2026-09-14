@@ -74,7 +74,7 @@ func (s *Scheduler) Notify(ctx context.Context, ev Event) {
 
 func (s *Scheduler) handleEvent(ctx context.Context, ev Event) {
 	switch ev.Type {
-	case "add":
+	case EventAdd:
 		m, err := s.monitorRepo.GetMonitorById(ctx, ev.MonitorId)
 
 		if err != nil || !m.Active {
@@ -89,7 +89,7 @@ func (s *Scheduler) handleEvent(ctx context.Context, ev Event) {
 		s.q.push(&entry{monitorID: m.ID, nextRun: next, intervalSeconds: m.IntervalSeconds})
 		log.Printf("scheduler: added monitor %s to queue", ev.MonitorId)
 
-	case "update":
+	case EventUpdate:
 		m, err := s.monitorRepo.GetMonitorById(ctx, ev.MonitorId)
 		if err != nil || !m.Active {
 			s.q.remove(ev.MonitorId) // no-op since the monitor is not active or doesn't exist
@@ -105,7 +105,7 @@ func (s *Scheduler) handleEvent(ctx context.Context, ev Event) {
 		s.q.upsert(&entry{monitorID: m.ID, nextRun: next, intervalSeconds: m.IntervalSeconds})
 		log.Printf("scheduler: updated monitor %s in queue", ev.MonitorId)
 
-	case "remove":
+	case EventRemove:
 		s.q.remove(ev.MonitorId)
 		log.Printf("scheduler: removed monitor %s from queue", ev.MonitorId)
 
