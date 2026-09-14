@@ -25,10 +25,13 @@ horizontally (one Docker pod now; external queue once warranted).
   window (`?window=24h|7d|30d|90d`, default 24h) with a single
   `LEFT JOIN LATERAL` query per page, no N+1); `down` = open incident
   (`resolved_at IS NULL`).
-- **Real-time events (SSE)**: `GET /stream` (Bearer auth) pushes events per
-  user through an in-memory pub/sub hub (`internal/stream`): `check.completed`,
-  `incident.opened`/`resolved`, `monitor.created`/`updated`/`deleted`. Heartbeat
-  every 15s; non-blocking delivery drops slow consumers.
+- **Real-time events (SSE)**: `GET /stream` (auth via Bearer header or `?token=`
+  query param for the browser EventSource) pushes events per user through an
+  in-memory pub/sub hub (`internal/stream`): `check.completed`,
+  `incident.opened`/`resolved`, `monitor.created`/`updated`/`deleted`. Event
+  names are constants in `internal/stream/constants.go` and
+  `internal/scheduler/constants.go`. Heartbeat every 15s; non-blocking
+  delivery drops slow consumers.
 - **Pricing doc** (`docs/PRICING.md`) is direction, NOT final. The minimum
   interval validation (reject < 60s) is deferred until pricing is decided.
 
@@ -66,14 +69,15 @@ horizontally (one Docker pod now; external queue once warranted).
   non-blocking delivery (slow clients get dropped, not the whole bus).
 - ❌ Dashboard / public status-page endpoints: descartados por ahora (sin
   consumidor; se retomarán con el cliente en Phase 6, con flag `public` de opt-in).
-- ▶ **Remaining (frontend prep)**:
-  - **Frontend auth for `/stream`** — the browser `EventSource` API cannot send
-    an `Authorization` header, so reading the stream from the dashboard needs a
-    token via query param or cookie (currently the endpoint only accepts the
-    Bearer header, as used by Postman/curl).
-  - **Incident streaming events** — `incident.opened`/`resolved` are emitted by
-    the worker, but they still need to be validated end-to-end (trigger a real
-    incident on a failing monitor and confirm the frames arrive).
+- ✅ **Frontend auth for `/stream`** — the browser `EventSource` API cannot send
+  an `Authorization` header; the endpoint now accepts the JWT via a `?token=`
+  query parameter (the Bearer header keeps working for curl/Postman).
+- ✅ **Incident streaming events** — `incident.opened`/`resolved` validated
+  end-to-end (a real incident on a failing monitor confirmed the frames arrive).
+- ✅ **Magic strings → constants** — event names centralized in
+  `internal/stream/constants.go` (stream) and `internal/scheduler/constants.go`
+  (queue) and replaced across the codebase: a single source of truth for the
+  frontend contract.
 
 ### Phase 4 — Check types + retention
 - SSL/TLS certificate expiry, keyword match, latency threshold.

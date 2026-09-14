@@ -24,6 +24,7 @@ tags:
   - name: Auth
   - name: Monitors
   - name: Incidents
+  - name: Stream
 
 security:
   - bearerAuth: []
@@ -137,6 +138,42 @@ paths:
                 $ref: "#/components/schemas/TokenResponse"
         "401":
           description: Invalid email or password
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /stream:
+    get:
+      tags: [Stream]
+      summary: Subscribe to real-time events (SSE)
+      description: |
+        Opens a Server-Sent Events (SSE) stream. The connection stays open and
+        the server pushes frames scoped to the authenticated user; event names
+        are a stable contract for the frontend (see the `StreamEvent` schema).
+
+        Auth: the browser `EventSource` API cannot send an `Authorization`
+        header, so the JWT is also accepted via the `token` query parameter
+        (that is the variant the dashboard must use).
+      operationId: streamEvents
+      parameters:
+        - name: token
+          in: query
+          description: JWT session token. Alternative to the Authorization header; required for browser EventSource.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: |
+            Event stream. Each message is a `text/event-stream` frame shaped
+            `event: <type>` + `data: <json>` separated by a blank line, plus a
+            `: ping` heartbeat comment every 15s to keep connections alive.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "401":
+          description: Missing or invalid token
           content:
             application/json:
               schema:
@@ -562,6 +599,38 @@ components:
         token:
           type: string
           description: JWT session token.
+
+    StreamEvent:
+      type: object
+      description: |
+        One SSE frame emitted over `GET /stream`. The `event` value is the
+        message type; `data` is the JSON payload. Event names are a stable
+        contract — mirror of `internal/stream/constants.go` — which the
+        frontend can rely on for subscriptions.
+      properties:
+        event:
+          type: string
+          enum:
+            - check.completed
+            - incident.opened
+            - incident.resolved
+            - monitor.created
+            - monitor.updated
+            - monitor.deleted
+        data:
+          type: object
+          description: |
+            Payload per type: `check.completed` → Check; `incident.opened` /
+            `incident.resolved` → Incident; `monitor.created` / `monitor.updated`
+            → Monitor; `monitor.deleted` → `{"id": "<uuid>"}`.
+          example:
+            event: check.completed
+            data:
+              id: 1a2b3c4d-5e6f-7890-abcd-ef1234567890
+              monitor_id: 2fc3b8ab-56d5-4393-ae3c-956aee66af4a
+              response_time_ms: 25
+              success: true
+              checked_at: 2026-09-14T09:00:00Z
 
     MessageOk:
       type: object
