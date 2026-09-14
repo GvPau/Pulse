@@ -1,11 +1,11 @@
 package incident
 
 import (
-	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
 	"pulse/internal/auth"
+	"pulse/internal/httpx"
 	"uuid"
 
 	"github.com/go-chi/chi/v5"
@@ -22,26 +22,44 @@ func NewHandler(service *Service) *Handler {
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserIDFromContext(r.Context())
 
-	// Parse optional monitor_id filter
-	var monitorID *uuid.UUID
-	if raw := r.URL.Query().Get("monitor_id"); raw != "" {
-		id, err := uuid.Parse(raw)
-		if err != nil {
-			http.Error(w, "invalid monitor_id", http.StatusBadRequest)
+	pp, err := httpx.ParsePageParams(r)
+	if err != nil {
+		var ve *httpx.ValidationError
+		if errors.As(err, &ve) {
+			httpx.WriteValidationError(w, ve)
 			return
 		}
-		monitorID = &id
-	}
-
-	incidents, err := h.service.List(r.Context(), userID, monitorID)
-	if err != nil {
-		log.Printf("list incidents: %v", err)
-		http.Error(w, "failed to list incidents", http.StatusInternalServerError)
+		httpx.WriteError(w, http.StatusBadRequest, httpx.CodeInvalidRequest, "invalid parameters")
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(incidents)
+	params := ListParams{Page: pp.Page, Limit: pp.Limit}
+
+	if raw := r.URL.Query().Get("monitor_id"); raw != "" {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, httpx.CodeInvalidRequest, "monitor_id must be a valid uuid")
+			return
+		}
+		params.MonitorID = &id
+	}
+
+	if raw := r.URL.Query().Get("status"); raw != "" {
+		if raw != "active" && raw != "resolved" {
+			httpx.WriteError(w, http.StatusBadRequest, httpx.CodeInvalidRequest, "status must be one of: active, resolved")
+			return
+		}
+		params.Status = raw
+	}
+
+	incidents, total, err := h.service.List(r.Context(), userID, params)
+	if err != nil {
+		log.Printf("list incidents: %v", err)
+		httpx.WriteError(w, http.StatusInternalServerError, httpx.CodeInternal, "failed to list incidents")
+		return
+	}
+
+	httpx.WriteList(w, pp, total, incidents)
 }
 
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
@@ -56,14 +74,13 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	incident, err := h.service.Get(r.Context(), userID, id)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			http.Error(w, "incident not found", http.StatusNotFound)
+			httpx.WriteError(w, http.StatusNotFound, httpx.CodeNotFound, "incident not found")
 			return
 		}
 
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httpx.WriteError(w, http.StatusInternalServerError, httpx.CodeInternal, "failed to get incident")
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(incident)
+	httpx.WriteJSON(w, http.StatusOK, incident)
 }

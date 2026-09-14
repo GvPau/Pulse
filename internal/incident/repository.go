@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 	"uuid"
 
@@ -36,20 +37,48 @@ func (r *Repository) Create(ctx context.Context, inc *Incident) error {
 	return nil
 }
 
-// ListByMonitor returns all incidents for a monitor owned by the user.
+// List returns all incidents for a monitor owned by the user.
 // If monitorID is nil, it returns all incidents for the user.
-func (r *Repository) ListByMonitor(ctx context.Context, userID uuid.UUID, monitorID *uuid.UUID) ([]Incident, error) {
-	rows, err := r.pool.Query(ctx,
-		`SELECT inc.id, inc.monitor_id, inc.started_at, inc.resolved_at, inc.status, inc.failure_count, inc.created_at
-	FROM incidents inc
+func (r *Repository) List(ctx context.Context, userID uuid.UUID, p ListParams) ([]Incident, int, error) {
+	where := []string{"m.user_id = $1"}
+	args := []any{userID}
+
+	if p.MonitorID != nil {
+		args = append(args, *p.MonitorID)
+		where = append(where, fmt.Sprintf("inc.monitor_id = $%d", len(args)))
+	}
+
+	if p.Status != "" {
+		args = append(args, p.Status)
+		where = append(where, fmt.Sprintf("inc.status = $%d", len(args)))
+	}
+
+	whereSQL := strings.Join(where, " AND ")
+
+	var total int
+	if err := r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM incidents inc
 	JOIN monitors m ON m.id = inc.monitor_id
-	WHERE m.user_id = $1 AND ($2::uuid IS NULL OR inc.monitor_id = $2)
-	ORDER BY inc.created_at DESC`,
-		userID, monitorID,
+	WHERE `+whereSQL, args...,
+	).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count incidents: %w", err)
+	}
+
+	args = append(args, p.Limit, (p.Page-1)*p.Limit)
+	rows, err := r.pool.Query(ctx,
+		fmt.Sprintf(
+			`SELECT inc.id, inc.monitor_id, inc.started_at, inc.resolved_at, inc.status, inc.failure_count, inc.created_at
+		 FROM incidents inc
+		 JOIN monitors m ON m.id = inc.monitor_id
+		 WHERE %s
+		 ORDER BY inc.started_at DESC
+		 LIMIT $%d OFFSET $%d`,
+			whereSQL, len(args)-1, len(args),
+		), args...,
 	)
 
 	if err != nil {
-		return nil, fmt.Errorf("list incident by user %w", err)
+		return nil, 0, fmt.Errorf("list incidents: %w", err)
 	}
 	defer rows.Close()
 
@@ -58,11 +87,15 @@ func (r *Repository) ListByMonitor(ctx context.Context, userID uuid.UUID, monito
 		inc := Incident{}
 		if err := rows.Scan(&inc.ID, &inc.MonitorID, &inc.StartedAt, &inc.ResolvedAt,
 			&inc.Status, &inc.FailureCount, &inc.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan incident %w", err)
+			return nil, 0, fmt.Errorf("scan incident %w", err)
 		}
 		incidents = append(incidents, inc)
 	}
-	return incidents, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("list incidents rows: %w", err)
+	}
+
+	return incidents, total, nil
 }
 
 // GetByID returns a single incident scoped to the user's monitors.
