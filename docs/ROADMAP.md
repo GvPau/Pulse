@@ -42,8 +42,13 @@ horizontally (one Docker pod now; external queue once warranted).
 - **Pagination**: `?page=&limit=` (default 1/20, max 100), envelope `{data, pagination:{page,limit,total,has_more}}`.
 - **Filters/sorts (monitors)**: `?q=` (ILIKE), `?active=true|false`, `?sort=name|created_at|interval_seconds&order=asc|desc`. Whitelist enforced.
 - **`healthz`/`readyz`**: liveness (always 200) + readiness (pool.Ping with 2s timeout, 503 on failure).
-- **Contract-first doc** (`docs/API.md`): *pendiente* — se añadirá como cierre de fase.
-- **Incidents/checks**: paginación y filtros pendientes para cuando se retomen esos endpoints.
+- ✅ **Contract-first doc** (`docs/API.md`) — readable reference mirroring the
+  OpenAPI contract: auth, pagination, monitors, checks, incidents, SSE stream,
+  health and the error contract.
+- ✅ **Incidents**: pagination (`?page=&limit=`), standard envelope and
+  filters `?monitor_id=`/`?status=` (UUID + active|resolved validation);
+  errors migrated to the standard contract.
+- **Checks**: pagination and filters pending until those endpoints are revisited.
 
 ### Phase 2 — Notifications
 - `notification_channels` (webhook first, email later via a provider such as Resend).

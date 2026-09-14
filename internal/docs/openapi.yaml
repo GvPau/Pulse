@@ -405,26 +405,26 @@ paths:
   /incidents:
     parameters:
       - $ref: "#/components/parameters/MonitorIdQuery"
+      - $ref: "#/components/parameters/PageQuery"
+      - $ref: "#/components/parameters/LimitQuery"
+      - $ref: "#/components/parameters/StatusQuery"
     get:
       tags: [Incidents]
       summary: List incidents
       description: |
-        Lists the caller's incidents. Optional `?monitor_id=` filter.
-
-        Note: incidents still use the legacy plain-JSON format (no pagination
-        envelope). Migration to the standard contract is pending.
+        Lists the caller's incidents, newest first. Optional filters:
+        `?monitor_id=` (UUID) and `?status=` (`active` | `resolved`).
+        Pagination via `?page=`/`?limit=` with the standard envelope.
       operationId: listIncidents
       responses:
         "200":
-          description: Incident list
+          description: Paginated incident list
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Incident"
+                $ref: "#/components/schemas/IncidentListResponse"
         "400":
-          description: monitor_id is not a valid UUID
+          description: Invalid monitor_id, status, or pagination parameters
           content:
             application/json:
               schema:
@@ -545,6 +545,13 @@ components:
       schema:
         type: string
         format: uuid
+    StatusQuery:
+      name: status
+      in: query
+      description: Filter incidents by status.
+      schema:
+        type: string
+        enum: [active, resolved]
     WindowQuery:
       name: window
       in: query
@@ -903,3 +910,14 @@ components:
         created_at:
           type: string
           format: date-time
+
+    IncidentListResponse:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Incident"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
