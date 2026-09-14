@@ -37,6 +37,27 @@ horizontally (one Docker pod now; external queue once warranted).
 
 ## Next steps
 
+> Decision block (session 2026-09-15): pick ONE, work it top-down. Each has a
+> self-contained scope so it can start from a clean clone. Current pending
+> design decisions are noted inline so the next session doesn't have to
+> re-derive them.
+
+1. **Phase 2a — Webhook notifications** (feature, ~1 session): `notification_channels`
+   + `monitor_channels` tables, `internal/notifier` with a webhook `Dispatcher`,
+   hooks `incident.opened -> DOWN` / `resolved -> RECOVERED`. ⚠️ Open decision:
+   delivery log with retries (table `notification_deliveries` vs in-memory queue)
+   — decide before implementing.
+2. **Phase 7 — Tests** (foundation): no tests exist yet. Start with table-driven
+   handler tests over `httptest` for auth/monitors/incidents, then service layer.
+   Run against the real DB via the existing docker `pulse-db`.
+3. **Phase 4 — Check types + retention**: SSL/TLS certificate expiry, keyword
+   match, latency threshold; retention policy for `monitor_checks`.
+4. **Phase 5 — Auth completeness**: Google SSO, email verification, user profile
+   (change password, delete account).
+5. **Phase 2b — Email notifications** (after the frontend, to verify from the
+   dashboard): add a provider (e.g. Resend) — only new `type` value + second
+   `Dispatcher`, no schema migration.
+
 ### Phase 1 — API foundations ✅ (06 Sep 2026)
 - **Error contract**: `{"error":{"code","message","details"}}`, codes `invalid_request`, `unauthorized`, `not_found`, `conflict`, `internal_error`. Validations → 400 with field-level `details`.
 - **Pagination**: `?page=&limit=` (default 1/20, max 100), envelope `{data, pagination:{page,limit,total,has_more}}`.
@@ -48,7 +69,8 @@ horizontally (one Docker pod now; external queue once warranted).
 - ✅ **Incidents**: pagination (`?page=&limit=`), standard envelope and
   filters `?monitor_id=`/`?status=` (UUID + active|resolved validation);
   errors migrated to the standard contract.
-- **Checks**: pagination and filters pending until those endpoints are revisited.
+- ✅ **Checks**: paginated (`?page=&limit=`) with `?success=` filter and
+  standard envelope, aligned with the contract.
 
 ### Phase 2 — Notifications
 - `notification_channels` (webhook first, email later via a provider such as Resend).
